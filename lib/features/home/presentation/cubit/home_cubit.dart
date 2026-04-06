@@ -6,6 +6,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../domain/campaign_playlist_socket.dart';
 import '../../domain/entities/ad_content.dart';
 import '../../domain/entities/preloaded_ads_holder.dart';
 import '../../domain/repositories/ads_repository.dart';
@@ -14,9 +15,13 @@ import 'home_state.dart';
 /// Single video controller at a time; init next when advancing to next video slot.
 /// Posters and videos are shown in order: each poster 20s, then each video for its duration.
 class HomeCubit extends Cubit<HomeState> {
-  HomeCubit(this._adsRepository) : super(const HomeInitial());
+  HomeCubit(
+    this._adsRepository,
+    this._campaignSocket,
+  ) : super(const HomeInitial());
 
   final AdsRepository _adsRepository;
+  final CampaignPlaylistSocket _campaignSocket;
   static const Duration _posterDuration = Duration(seconds: 20);
   Timer? _rotationTimer;
   VoidCallback? _videoErrorListener;
@@ -36,12 +41,52 @@ class HomeCubit extends Cubit<HomeState> {
         if (isClosed) return;
         _startRotation(content);
       });
+      unawaited(
+        _campaignSocket.start(
+          onPlaylistRefresh: () {
+            unawaited(refreshPlaylistFromServer());
+          },
+        ),
+      );
     } catch (e, st) {
       if (kDebugMode) {
         // ignore: avoid_print
         print('HomeCubit.loadAds error: $e\n$st');
       }
       if (!isClosed) emit(HomeError(e.toString()));
+    }
+  }
+
+  /// Called when the devices socket connects or campaign events fire — fetches latest playlist.
+  Future<void> refreshPlaylistFromServer() async {
+    if (isClosed) return;
+    if (state is HomeLoading) return;
+    try {
+      final AdContent content = await _adsRepository.refreshAds();
+      if (isClosed) return;
+      _rotationTimer?.cancel();
+      _rotationTimer = null;
+      _removeVideoCompletionListener();
+      final HomeState s = state;
+      if (s is HomeLoaded && s.videoController != null) {
+        final VideoPlayerController c = s.videoController!;
+        if (_videoErrorListener != null) {
+          c.removeListener(_videoErrorListener!);
+          _videoErrorListener = null;
+        }
+        c.dispose();
+      }
+      _videoSlotGeneration++;
+      emit(HomeContentReady(content: content));
+      SchedulerBinding.instance.scheduleFrameCallback((_) {
+        if (isClosed) return;
+        _startRotation(content);
+      });
+    } catch (e, st) {
+      if (kDebugMode) {
+        // ignore: avoid_print
+        print('HomeCubit.refreshPlaylistFromServer error: $e\n$st');
+      }
     }
   }
 
@@ -261,7 +306,8 @@ class HomeCubit extends Cubit<HomeState> {
   }
 
   @override
-  Future<void> close() {
+  Future<void> close() async {
+    await _campaignSocket.dispose();
     _rotationTimer?.cancel();
     _rotationTimer = null;
     _removeVideoCompletionListener();
@@ -277,3 +323,4 @@ class HomeCubit extends Cubit<HomeState> {
     return super.close();
   }
 }
+

@@ -35,8 +35,6 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
-            // Shrink resources only (no minify) for smaller APK on 1 GB RAM; avoids R8/Play Core issues
-            isShrinkResources = true
         }
     }
 }

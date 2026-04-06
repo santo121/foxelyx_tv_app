@@ -2,11 +2,12 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../../../../core/config/api_config.dart';
 import '../../../../core/domain/repositories/auth_repository.dart';
 import '../../domain/entities/ad_content.dart';
 
 /// Fetches the ad playlist: `GET /api/devices/:deviceId/playlist`.
-const String _playlistBaseHost = 'api.foxelyx.com';
+const String _playlistBaseHost = ApiConfig.host;
 
 class PlaylistAdsDatasource {
   PlaylistAdsDatasource(
@@ -50,9 +51,6 @@ class PlaylistAdsDatasource {
     final Map<String, dynamic> json =
         jsonDecode(response.body) as Map<String, dynamic>;
     final AdContent parsed = _parseResponse(json);
-    if (parsed.videoUrls.isEmpty && parsed.posterUrls.isEmpty) {
-      throw Exception('Playlist is empty.');
-    }
     return parsed;
   }
 

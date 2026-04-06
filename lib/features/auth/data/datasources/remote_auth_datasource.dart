@@ -2,11 +2,12 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../../../../core/config/api_config.dart';
 import '../../../../core/debug/api_request_log.dart';
 import '../../../../core/domain/entities/vehicle_session.dart';
 
 /// Foxelyx API base (pair + device auth).
-const String _baseUrl = 'https://api.foxelyx.com';
+const String _baseUrl = ApiConfig.baseUrl;
 
 /// Pairing code → device credentials → access token.
 class RemoteAuthDatasource {

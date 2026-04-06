@@ -16,6 +16,12 @@ class AdsRepositoryImpl implements AdsRepository {
   /// Resolves every video URL to a local path (cached file or asset).
   /// Once resolved, subsequent calls return the same cached content — no network, no re-resolve.
   @override
+  Future<AdContent> refreshAds() async {
+    _cachedResolvedContent = null;
+    return getAds();
+  }
+
+  @override
   Future<AdContent> getAds() async {
     if (_cachedResolvedContent != null) return _cachedResolvedContent!;
 

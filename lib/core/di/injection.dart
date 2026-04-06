@@ -7,7 +7,9 @@ import '../../features/auth/data/datasources/local_auth_datasource.dart';
 import '../../features/auth/data/datasources/remote_auth_datasource.dart';
 import '../../features/auth/data/repositories/auth_repository_impl.dart';
 import '../../features/auth/presentation/cubit/auth_cubit.dart';
+import '../../features/home/data/datasources/devices_campaign_socket_datasource.dart';
 import '../../features/home/data/datasources/playlist_ads_datasource.dart';
+import '../../features/home/domain/campaign_playlist_socket.dart';
 import '../../features/home/data/datasources/video_cache_datasource.dart';
 import '../../features/home/data/repositories/ads_repository_impl.dart';
 import '../../features/home/domain/repositories/ads_repository.dart';
@@ -40,6 +42,9 @@ Future<void> setupDi() async {
   getIt.registerLazySingleton<PlaylistAdsDatasource>(
     () => PlaylistAdsDatasource(getIt<AuthRepository>()),
   );
+  getIt.registerFactory<CampaignPlaylistSocket>(
+    () => DevicesCampaignSocketDatasource(getIt<AuthRepository>()),
+  );
   getIt.registerLazySingleton<VideoCacheDatasource>(VideoCacheDatasource.new);
   getIt.registerLazySingleton<AdsRepository>(
     () => AdsRepositoryImpl(
@@ -48,6 +53,9 @@ Future<void> setupDi() async {
     ),
   );
   getIt.registerFactory<HomeCubit>(
-    () => HomeCubit(getIt<AdsRepository>()),
+    () => HomeCubit(
+      getIt<AdsRepository>(),
+      getIt<CampaignPlaylistSocket>(),
+    ),
   );
 }

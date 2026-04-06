@@ -1,6 +1,7 @@
 package com.example.flutter_tv_app
 
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -28,6 +29,23 @@ class MainActivity : FlutterActivity() {
         super.onCreate(savedInstanceState)
         // Keep screen on so the app is not put to sleep or backgrounded by TV
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // Treat HOME leave as an app close request on TV.
+        finishAffinity()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // HOME is usually handled by the system. If it is delivered, close app.
+        if (event.keyCode == KeyEvent.KEYCODE_HOME) {
+            finishAffinity()
+            return true
+        }
+
+        // Let Flutter handle DPAD/number keys and text input normally.
+        return super.dispatchKeyEvent(event)
     }
 
     /**

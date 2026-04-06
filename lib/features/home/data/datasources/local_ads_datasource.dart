@@ -12,6 +12,7 @@ class LocalAdsDatasource {
     // often use profiles that cause red screen / decode errors on TV.
     return const AdContent(
       videoUrls: [
+        'https://cdn.pixabay.com/video/2026/01/28/330898_large.mp4',
         // 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
         'assets/videos/VIDEO-2026-02-25-10-37-10.mp4',
         'assets/videos/G-tech.mp4',

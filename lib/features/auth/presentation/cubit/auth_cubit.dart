@@ -13,47 +13,31 @@ class AuthCubit extends Cubit<AuthState> {
   final AuthRepository _authRepository;
   final DeviceInfoDatasource _deviceInfo;
 
-  /// Load device ID and emit so the login form can show it (read-only).
-  Future<void> loadDeviceId() async {
+  /// Load MAC or fallback device id and emit so the login form can show it (read-only).
+  Future<void> loadMacAddress() async {
     try {
-      final String deviceId = await _deviceInfo.getDeviceId();
-      if (!isClosed) emit(AuthDeviceIdLoaded(deviceId: deviceId));
+      final String id = await _deviceInfo.getDisplayDeviceIdentifier();
+      if (!isClosed) emit(AuthMacLoaded(deviceIdentifier: id));
     } catch (e, st) {
       if (kDebugMode) {
         // ignore: avoid_print
-        print('AuthCubit.loadDeviceId error: $e\n$st');
+        print('AuthCubit.loadMacAddress error: $e\n$st');
       }
-      if (!isClosed) emit(AuthError('Could not read device ID.'));
+      if (!isClosed) emit(AuthError('Could not read MAC address.'));
     }
   }
 
-  /// Register with server using current device ID and vehicle registration number.
-  /// On success, session is saved locally and [AuthAuthenticated] is emitted.
-  Future<void> register(String registrationNumber) async {
-    final String regNo = registrationNumber.trim();
-    if (regNo.isEmpty) {
-      emit(const AuthError('Please enter the vehicle registration number.'));
+  /// Pair with pairing code, then complete `/auth/device`. Emits [AuthAuthenticated] on success.
+  Future<void> register(String pairingCode) async {
+    final String code = pairingCode.trim();
+    if (code.isEmpty) {
+      emit(const AuthError('Please enter the pairing code.'));
       return;
-    }
-
-    String deviceId;
-    final AuthState current = state;
-    if (current is AuthDeviceIdLoaded) {
-      deviceId = current.deviceId;
-    } else {
-      emit(const AuthLoading());
-      try {
-        deviceId = await _deviceInfo.getDeviceId();
-      } catch (e) {
-        if (!isClosed) emit(AuthError('Could not read device ID.'));
-        return;
-      }
     }
 
     emit(const AuthLoading());
     try {
-      final VehicleSession session =
-          await _authRepository.register(deviceId, regNo);
+      final VehicleSession session = await _authRepository.register(code);
       if (!isClosed) emit(AuthAuthenticated(session: session));
     } on AuthException catch (e) {
       if (!isClosed) emit(AuthError(e.message));

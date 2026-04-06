@@ -101,7 +101,8 @@ class _AuthGateState extends State<AuthGate> {
         ),
       );
     }
-    if (_session != null) {
+    if (_session != null &&
+        (_session!.accessToken?.isNotEmpty ?? false)) {
       return BlocProvider<HomeCubit>(
         create: (_) {
           final HomeCubit cubit = getIt<HomeCubit>();

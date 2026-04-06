@@ -14,16 +14,15 @@ class AuthRepositoryImpl implements AuthRepository {
   Future<VehicleSession?> getStoredSession() => _local.getSession();
 
   @override
-  Future<VehicleSession> register(
-    String deviceId,
-    String registrationNumber,
-  ) async {
-    final VehicleSession session =
-        await _remote.register(deviceId, registrationNumber);
+  Future<VehicleSession> register(String pairingCode) async {
+    final VehicleSession session = await _remote.register(pairingCode);
     await _local.saveSession(session);
     return session;
   }
 
   @override
   Future<void> clearSession() => _local.clearSession();
+
+  @override
+  Future<String?> getAccessToken() => _local.getAccessToken();
 }

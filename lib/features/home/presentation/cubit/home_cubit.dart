@@ -20,6 +20,9 @@ class HomeCubit extends Cubit<HomeState> {
   static const Duration _posterDuration = Duration(seconds: 20);
   Timer? _rotationTimer;
   VoidCallback? _videoErrorListener;
+  VoidCallback? _videoCompletionListener;
+  VideoPlayerController? _videoCompletionController;
+  int _videoSlotGeneration = 0;
 
   Future<void> loadAds() async {
     emit(const HomeLoading());
@@ -142,6 +145,15 @@ class HomeCubit extends Cubit<HomeState> {
     }
   }
 
+  void _removeVideoCompletionListener() {
+    if (_videoCompletionListener != null &&
+        _videoCompletionController != null) {
+      _videoCompletionController!.removeListener(_videoCompletionListener!);
+    }
+    _videoCompletionListener = null;
+    _videoCompletionController = null;
+  }
+
   /// When a video fails to play, try the next video or return to posters.
   void _skipToNextVideoOrPosters(AdContent content, int failedVideoIndex) {
     if (isClosed) return;
@@ -172,8 +184,11 @@ class HomeCubit extends Cubit<HomeState> {
         if (next < posterCount) {
           emit(HomeLoaded(content: content, currentDisplayIndex: next));
           _scheduleNext(content, null, next);
-        } else {
+        } else if (videoCount > 0) {
           _playVideoAt(content, 0);
+        } else {
+          emit(HomeLoaded(content: content, currentDisplayIndex: 0));
+          _scheduleNext(content, null, 0);
         }
       });
       return;
@@ -187,37 +202,69 @@ class HomeCubit extends Cubit<HomeState> {
       }
       return;
     }
-    final Duration videoDuration = controller.value.duration;
-    final Duration displayDuration =
-        videoDuration > _posterDuration ? videoDuration : _posterDuration;
-    _rotationTimer = Timer(displayDuration, () async {
+    _removeVideoCompletionListener();
+    final int slot = ++_videoSlotGeneration;
+    _videoCompletionController = controller;
+    _videoCompletionListener = () {
       if (isClosed) return;
-      if (_videoErrorListener != null) {
-        controller.removeListener(_videoErrorListener!);
-        _videoErrorListener = null;
-      }
-      controller.pause();
-      controller.seekTo(Duration.zero);
-      controller.dispose();
+      if (slot != _videoSlotGeneration) return;
+      if (!controller.value.isInitialized) return;
+      if (!controller.value.isCompleted) return;
+      _rotationTimer?.cancel();
+      _rotationTimer = null;
+      _removeVideoCompletionListener();
+      _finishVideoSlotAndAdvance(content, controller, videoIndex, slot);
+    };
+    controller.addListener(_videoCompletionListener!);
 
-      if (videoIndex + 1 < videoCount) {
-        _playVideoAt(content, videoIndex + 1);
-      } else {
-        if (posterCount > 0) {
-          emit(HomeLoaded(content: content, currentDisplayIndex: 0));
-          _scheduleNext(content, null, 0);
-        } else {
-          // Video-only playlists should loop directly back to the first video.
-          _playVideoAt(content, 0);
-        }
-      }
+    final Duration videoDuration = controller.value.duration;
+    final Duration fallback = videoDuration > Duration.zero
+        ? videoDuration + const Duration(seconds: 3)
+        : const Duration(minutes: 2);
+    _rotationTimer = Timer(fallback, () {
+      if (isClosed) return;
+      if (slot != _videoSlotGeneration) return;
+      _rotationTimer = null;
+      _removeVideoCompletionListener();
+      _finishVideoSlotAndAdvance(content, controller, videoIndex, slot);
     });
+  }
+
+  void _finishVideoSlotAndAdvance(
+    AdContent content,
+    VideoPlayerController controller,
+    int videoIndex,
+    int slot,
+  ) {
+    if (isClosed) return;
+    if (slot != _videoSlotGeneration) return;
+    _videoSlotGeneration++;
+    if (_videoErrorListener != null) {
+      controller.removeListener(_videoErrorListener!);
+      _videoErrorListener = null;
+    }
+    controller.pause();
+    controller.seekTo(Duration.zero);
+    controller.dispose();
+
+    final int posterCount = content.posterUrls.length;
+    final int videoCount = content.videoUrls.length;
+
+    if (videoIndex + 1 < videoCount) {
+      _playVideoAt(content, videoIndex + 1);
+    } else if (posterCount > 0) {
+      emit(HomeLoaded(content: content, currentDisplayIndex: 0));
+      _scheduleNext(content, null, 0);
+    } else {
+      _playVideoAt(content, 0);
+    }
   }
 
   @override
   Future<void> close() {
     _rotationTimer?.cancel();
     _rotationTimer = null;
+    _removeVideoCompletionListener();
     final state = this.state;
     if (state is HomeLoaded && state.videoController != null) {
       final c = state.videoController!;

@@ -13,13 +13,14 @@ final class AuthInitial extends AuthState {
   const AuthInitial();
 }
 
-final class AuthDeviceIdLoaded extends AuthState {
-  const AuthDeviceIdLoaded({required this.deviceId});
+final class AuthMacLoaded extends AuthState {
+  const AuthMacLoaded({required this.deviceIdentifier});
 
-  final String deviceId;
+  /// Hardware MAC when readable; otherwise Android ID / iOS IDFV (or unavailable).
+  final String deviceIdentifier;
 
   @override
-  List<Object?> get props => [deviceId];
+  List<Object?> get props => [deviceIdentifier];
 }
 
 final class AuthLoading extends AuthState {

@@ -6,10 +6,13 @@ abstract class AuthRepository {
   /// Returns the stored session if the user is already logged in, else null.
   Future<VehicleSession?> getStoredSession();
 
-  /// Register with server using device ID and vehicle registration number.
-  /// On success, session is saved locally. Throws on invalid/unauthorized vehicle.
-  Future<VehicleSession> register(String deviceId, String registrationNumber);
+  /// Pair with [pairingCode], then authenticate the device. Session is saved on success.
+  Future<VehicleSession> register(String pairingCode);
 
   /// Clear stored session (e.g. logout).
   Future<void> clearSession();
+
+  /// JWT from the last successful `/auth/device` response (WebSocket, API headers).
+  /// Null if not logged in or legacy session without a token.
+  Future<String?> getAccessToken();
 }

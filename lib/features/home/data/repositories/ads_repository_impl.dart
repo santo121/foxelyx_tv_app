@@ -1,12 +1,12 @@
 import '../../domain/entities/ad_content.dart';
 import '../../domain/repositories/ads_repository.dart';
-import '../datasources/local_ads_datasource.dart';
+import '../datasources/playlist_ads_datasource.dart';
 import '../datasources/video_cache_datasource.dart';
 
 class AdsRepositoryImpl implements AdsRepository {
-  AdsRepositoryImpl(this._datasource, this._videoCache);
+  AdsRepositoryImpl(this._playlist, this._videoCache);
 
-  final LocalAdsDatasource _datasource;
+  final PlaylistAdsDatasource _playlist;
   final VideoCacheDatasource _videoCache;
 
   /// Cached resolved content so repeated getAds() (e.g. after each ad or new cubit)
@@ -19,7 +19,7 @@ class AdsRepositoryImpl implements AdsRepository {
   Future<AdContent> getAds() async {
     if (_cachedResolvedContent != null) return _cachedResolvedContent!;
 
-    final AdContent content = await _datasource.getAds();
+    final AdContent content = await _playlist.getAds();
     final List<String> resolved = <String>[];
     for (final String url in content.videoUrls) {
       resolved.add(await _videoCache.getLocalPath(url));

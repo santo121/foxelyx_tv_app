@@ -12,6 +12,8 @@ class CachedVideoDatabase {
   static const String _columnUrl = 'url';
   static const String _columnLocalPath = 'local_path';
   static const String _columnDownloadedAt = 'downloaded_at';
+  static const String _columnLastAccessedAt = 'last_accessed_at';
+  static const int _minValidVideoBytes = 1024;
 
   static Database? _db;
 
@@ -21,18 +23,40 @@ class CachedVideoDatabase {
     final String path = p.join(dir.path, 'cached_videos.db');
     _db = await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (Database db, int version) async {
         await db.execute('''
           CREATE TABLE $_table (
             $_columnUrl TEXT PRIMARY KEY,
             $_columnLocalPath TEXT NOT NULL,
-            $_columnDownloadedAt INTEGER NOT NULL
+            $_columnDownloadedAt INTEGER NOT NULL,
+            $_columnLastAccessedAt INTEGER NOT NULL
           )
         ''');
       },
+      onUpgrade: (Database db, int oldVersion, int newVersion) async {
+        if (oldVersion < 2) {
+          await _ensureLastAccessedAtColumn(db);
+        }
+      },
+      onOpen: (Database db) async {
+        await _ensureLastAccessedAtColumn(db);
+      },
     );
     return _db!;
+  }
+
+  static Future<void> _ensureLastAccessedAtColumn(Database db) async {
+    final List<Map<String, Object?>> columns = await db.rawQuery(
+      'PRAGMA table_info($_table)',
+    );
+    final bool hasLastAccessed = columns.any(
+      (Map<String, Object?> c) => c['name'] == _columnLastAccessedAt,
+    );
+    if (hasLastAccessed) return;
+    await db.execute(
+      'ALTER TABLE $_table ADD COLUMN $_columnLastAccessedAt INTEGER NOT NULL DEFAULT 0',
+    );
   }
 
   /// Returns stored local path for [url], or null if not in database.
@@ -46,8 +70,16 @@ class CachedVideoDatabase {
     );
     if (rows.isEmpty) return null;
     final String path = rows.first[_columnLocalPath]! as String;
-    if (!File(path).existsSync()) {
+    final File file = File(path);
+    final bool exists = await file.exists();
+    final int fileSize = exists ? await file.length() : 0;
+    if (!exists || fileSize < _minValidVideoBytes) {
       await deleteByUrl(url);
+      if (exists) {
+        try {
+          await file.delete();
+        } catch (_) {}
+      }
       return null;
     }
     return path;
@@ -56,15 +88,13 @@ class CachedVideoDatabase {
   /// Saves URL -> local path. Overwrites if URL already exists.
   static Future<void> saveCachedVideo(String url, String localPath) async {
     final Database db = await _getDb();
-    await db.insert(
-      _table,
-      <String, Object?>{
-        _columnUrl: url,
-        _columnLocalPath: localPath,
-        _columnDownloadedAt: DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    final int now = DateTime.now().millisecondsSinceEpoch;
+    await db.insert(_table, <String, Object?>{
+      _columnUrl: url,
+      _columnLocalPath: localPath,
+      _columnDownloadedAt: now,
+      _columnLastAccessedAt: now,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   static Future<void> deleteByUrl(String url) async {

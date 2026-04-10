@@ -17,10 +17,15 @@ class DevicesCampaignSocketDatasource implements CampaignPlaylistSocket {
 
   socket_io.Socket? _socket;
   Timer? _reconnectTimer;
+  Timer? _heartbeatTimer;
   bool _started = false;
   bool _isConnecting = false;
+  bool _isRefreshingAuth = false;
+  int _failedConnectAttempts = 0;
   void Function()? _onPlaylistRefresh;
   static const Duration _reconnectInterval = Duration(seconds: 5);
+  static const Duration _heartbeatInterval = Duration(seconds: 20);
+  static const int _maxAttemptsBeforeReauth = 3;
 
   /// Namespace `/devices` — same host as REST ([ApiConfig.host]).
   static const String _socketIoUrl = ApiConfig.socketIoDevicesUrl;
@@ -28,9 +33,10 @@ class DevicesCampaignSocketDatasource implements CampaignPlaylistSocket {
   /// Call once when home is ready. [onPlaylistRefresh] runs after connect and on campaign events.
   @override
   Future<void> start({required void Function() onPlaylistRefresh}) async {
+    _onPlaylistRefresh = onPlaylistRefresh;
     if (_started) return;
     _started = true;
-    _onPlaylistRefresh = onPlaylistRefresh;
+    _failedConnectAttempts = 0;
     await _connect();
   }
 
@@ -47,7 +53,7 @@ class DevicesCampaignSocketDatasource implements CampaignPlaylistSocket {
         print('DevicesCampaignSocket: no access_token; skip connect.');
       }
       _isConnecting = false;
-      _scheduleReconnect();
+      unawaited(_handleConnectFailure('missing token'));
       return;
     }
 
@@ -72,43 +78,73 @@ class DevicesCampaignSocketDatasource implements CampaignPlaylistSocket {
 
       socket.on('connect', (_) {
         _isConnecting = false;
+        _failedConnectAttempts = 0;
         _cancelReconnectTimer();
+        _startHeartbeat();
         _notifyRefresh();
       });
       socket.on('campaign.updated', onCampaignEvent);
       socket.on('campaign.created', onCampaignEvent);
-      socket.on('disconnect', (dynamic data) {
+      socket.on('disconnect', (dynamic data) async {
         if (kDebugMode) {
           // ignore: avoid_print
           print('DevicesCampaignSocket disconnected: $data');
         }
         _isConnecting = false;
-        _scheduleReconnect();
+        _cancelHeartbeatTimer();
+        await _handleConnectFailure('disconnect');
       });
-      socket.on('connect_error', (dynamic data) {
+      socket.on('connect_error', (dynamic data) async {
         if (kDebugMode) {
           // ignore: avoid_print
           print('DevicesCampaignSocket connect_error: $data');
         }
         _isConnecting = false;
-        _scheduleReconnect();
+        _cancelHeartbeatTimer();
+        await _handleConnectFailure('connect_error');
       });
-      socket.on('error', (dynamic data) {
+      socket.on('error', (dynamic data) async {
         if (kDebugMode) {
           // ignore: avoid_print
           print('DevicesCampaignSocket error: $data');
         }
         _isConnecting = false;
-        _scheduleReconnect();
+        _cancelHeartbeatTimer();
+        await _handleConnectFailure('error');
       });
     } catch (e, st) {
       _isConnecting = false;
-      _scheduleReconnect();
+      unawaited(_handleConnectFailure('exception'));
       if (kDebugMode) {
         // ignore: avoid_print
         print('DevicesCampaignSocket connect error: $e\n$st');
       }
     }
+  }
+
+  Future<void> _handleConnectFailure(String reason) async {
+    if (!_started) return;
+    _failedConnectAttempts++;
+    if (_failedConnectAttempts < _maxAttemptsBeforeReauth) {
+      _scheduleReconnect();
+      return;
+    }
+    _failedConnectAttempts = 0;
+    if (_isRefreshingAuth) {
+      _scheduleReconnect();
+      return;
+    }
+    _isRefreshingAuth = true;
+    try {
+      final bool refreshed = await _auth.refreshDeviceAuth();
+      if (kDebugMode) {
+        // ignore: avoid_print
+        print('DevicesCampaignSocket refresh auth after $reason: $refreshed');
+      }
+    } finally {
+      _isRefreshingAuth = false;
+    }
+    _scheduleReconnect();
   }
 
   void _scheduleReconnect() {
@@ -126,6 +162,22 @@ class DevicesCampaignSocketDatasource implements CampaignPlaylistSocket {
     _reconnectTimer = null;
   }
 
+  void _startHeartbeat() {
+    _cancelHeartbeatTimer();
+    _heartbeatTimer = Timer.periodic(_heartbeatInterval, (_) {
+      final socket_io.Socket? socket = _socket;
+      if (!_started || socket == null || !socket.connected) return;
+      socket.emit('heartbeat', <String, dynamic>{
+        'ts': DateTime.now().millisecondsSinceEpoch,
+      });
+    });
+  }
+
+  void _cancelHeartbeatTimer() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+  }
+
   void _notifyRefresh() {
     final void Function()? cb = _onPlaylistRefresh;
     if (cb == null) return;
@@ -136,8 +188,11 @@ class DevicesCampaignSocketDatasource implements CampaignPlaylistSocket {
   Future<void> dispose() async {
     _started = false;
     _isConnecting = false;
+    _isRefreshingAuth = false;
+    _failedConnectAttempts = 0;
     _onPlaylistRefresh = null;
     _cancelReconnectTimer();
+    _cancelHeartbeatTimer();
     try {
       _socket?.dispose();
     } catch (_) {}

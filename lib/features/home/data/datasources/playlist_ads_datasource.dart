@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../../../core/config/api_config.dart';
@@ -9,11 +10,15 @@ import '../../domain/entities/ad_content.dart';
 /// Fetches the ad playlist: `GET /api/devices/:deviceId/playlist`.
 const String _playlistBaseHost = ApiConfig.host;
 
+AdContent _parsePlaylistResponseBody(String responseBody) {
+  final Map<String, dynamic> json =
+      jsonDecode(responseBody) as Map<String, dynamic>;
+  return PlaylistAdsDatasource.parseResponseStatic(json);
+}
+
 class PlaylistAdsDatasource {
-  PlaylistAdsDatasource(
-    this._auth, {
-    http.Client? client,
-  }) : _client = client ?? http.Client();
+  PlaylistAdsDatasource(this._auth, {http.Client? client})
+    : _client = client ?? http.Client();
 
   final AuthRepository _auth;
   final http.Client _client;
@@ -22,7 +27,10 @@ class PlaylistAdsDatasource {
     final String? token = await _auth.getAccessToken();
     final session = await _auth.getStoredSession();
     final String? deviceId = session?.vehicleId;
-    if (token == null || token.isEmpty || deviceId == null || deviceId.isEmpty) {
+    if (token == null ||
+        token.isEmpty ||
+        deviceId == null ||
+        deviceId.isEmpty) {
       throw StateError('Not authenticated or device id missing.');
     }
 
@@ -39,7 +47,7 @@ class PlaylistAdsDatasource {
             'Accept': 'application/json',
           },
         )
-        .timeout(const Duration(seconds: 30));
+        .timeout(const Duration(seconds: 5));
 
     if (response.statusCode == 401 || response.statusCode == 403) {
       throw Exception('Playlist unauthorized. Sign in again.');
@@ -48,13 +56,18 @@ class PlaylistAdsDatasource {
       throw Exception('Playlist failed (${response.statusCode}).');
     }
 
-    final Map<String, dynamic> json =
-        jsonDecode(response.body) as Map<String, dynamic>;
-    final AdContent parsed = _parseResponse(json);
+    final AdContent parsed = await compute(
+      _parsePlaylistResponseBody,
+      response.body,
+    );
     return parsed;
   }
 
-  AdContent _parseResponse(Map<String, dynamic> json) {
+  static AdContent parseResponseStatic(Map<String, dynamic> json) {
+    return _parseResponse(json);
+  }
+
+  static AdContent _parseResponse(Map<String, dynamic> json) {
     final dynamic data = json['data'] ?? json;
     if (data is List<dynamic>) {
       return _parseItems(data);
@@ -64,24 +77,29 @@ class PlaylistAdsDatasource {
     }
     final Map<String, dynamic> body = data;
 
-    List<String> videos = _urlsFromKeys(
-      body,
-      <String>['videoUrls', 'video_urls', 'videos'],
-    );
-    List<String> posters = _urlsFromKeys(
-      body,
-      <String>['posterUrls', 'poster_urls', 'posters', 'images'],
-    );
+    List<String> videos = _urlsFromKeys(body, <String>[
+      'videoUrls',
+      'video_urls',
+      'videos',
+    ]);
+    List<String> posters = _urlsFromKeys(body, <String>[
+      'posterUrls',
+      'poster_urls',
+      'posters',
+      'images',
+    ]);
 
     if (videos.isEmpty && posters.isEmpty) {
       final dynamic items = body['items'] ?? body['playlist'];
       if (items is List<dynamic>) {
         return _parseItems(items);
       }
-      videos = _urlsFromFlatListKeys(
-        body,
-        <String>['urls', 'media', 'assets', 'contents'],
-      );
+      videos = _urlsFromFlatListKeys(body, <String>[
+        'urls',
+        'media',
+        'assets',
+        'contents',
+      ]);
     }
 
     if (videos.isEmpty && posters.isEmpty) {
@@ -90,14 +108,22 @@ class PlaylistAdsDatasource {
     return AdContent(videoUrls: videos, posterUrls: posters);
   }
 
-  AdContent _parseItems(List<dynamic> items) {
+  static AdContent _parseItems(List<dynamic> items) {
     final List<String> videos = <String>[];
     final List<String> posters = <String>[];
     for (final dynamic item in items) {
       if (item is! Map) continue;
       final Map<String, dynamic> m = Map<String, dynamic>.from(item);
-      final String? type =
-          (m['type'] ?? m['kind'] ?? m['mediaType'])?.toString().toLowerCase();
+      final String? orientation = m['orientation']?.toString().toLowerCase();
+      // TV app is landscape-only; when API sends orientation, keep only horizontal items.
+      if (orientation != null &&
+          orientation.isNotEmpty &&
+          orientation != 'horizontal') {
+        continue;
+      }
+      final String? type = (m['type'] ?? m['kind'] ?? m['mediaType'])
+          ?.toString()
+          .toLowerCase();
       final String? v = _firstString(m, <String>[
         'videoUrl',
         'video_url',
@@ -138,7 +164,7 @@ class PlaylistAdsDatasource {
     return AdContent(videoUrls: videos, posterUrls: posters);
   }
 
-  bool _looksLikeVideo(String url) {
+  static bool _looksLikeVideo(String url) {
     final String lower = url.toLowerCase();
     return lower.contains('.mp4') ||
         lower.contains('.webm') ||
@@ -146,7 +172,7 @@ class PlaylistAdsDatasource {
         lower.contains('/video');
   }
 
-  String? _firstString(Map<String, dynamic> m, List<String> keys) {
+  static String? _firstString(Map<String, dynamic> m, List<String> keys) {
     for (final String k in keys) {
       final Object? v = m[k];
       if (v is String && v.isNotEmpty) return v;
@@ -154,7 +180,7 @@ class PlaylistAdsDatasource {
     return null;
   }
 
-  List<String> _urlsFromFlatListKeys(
+  static List<String> _urlsFromFlatListKeys(
     Map<String, dynamic> data,
     List<String> keys,
   ) {
@@ -166,10 +192,12 @@ class PlaylistAdsDatasource {
         if (e is String && e.isNotEmpty) {
           out.add(e);
         } else if (e is Map) {
-          final String? u = _firstString(
-            Map<String, dynamic>.from(e),
-            <String>['url', 'src', 'videoUrl', 'video_url'],
-          );
+          final String? u = _firstString(Map<String, dynamic>.from(e), <String>[
+            'url',
+            'src',
+            'videoUrl',
+            'video_url',
+          ]);
           if (u != null) out.add(u);
         }
       }
@@ -178,7 +206,7 @@ class PlaylistAdsDatasource {
     return <String>[];
   }
 
-  List<String> _urlsFromKeys(Map<String, dynamic> data, List<String> keys) {
+  static List<String> _urlsFromKeys(Map<String, dynamic> data, List<String> keys) {
     for (final String key in keys) {
       final dynamic raw = data[key];
       if (raw is! List<dynamic>) continue;
@@ -187,10 +215,12 @@ class PlaylistAdsDatasource {
         if (e is String && e.isNotEmpty) {
           out.add(e);
         } else if (e is Map) {
-          final String? u = _firstString(
-            Map<String, dynamic>.from(e),
-            <String>['url', 'src', 'videoUrl', 'video_url'],
-          );
+          final String? u = _firstString(Map<String, dynamic>.from(e), <String>[
+            'url',
+            'src',
+            'videoUrl',
+            'video_url',
+          ]);
           if (u != null) out.add(u);
         }
       }

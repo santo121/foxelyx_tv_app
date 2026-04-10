@@ -25,4 +25,24 @@ class AuthRepositoryImpl implements AuthRepository {
 
   @override
   Future<String?> getAccessToken() => _local.getAccessToken();
+
+  @override
+  Future<bool> refreshDeviceAuth() async {
+    final VehicleSession? existing = await _local.getSession();
+    if (existing == null) return false;
+    final String? secret = existing.secret;
+    if (secret == null || secret.isEmpty) return false;
+    if (existing.deviceId.isEmpty) return false;
+    try {
+      final VehicleSession refreshed = await _remote.authenticateDevice(
+        apiDeviceId: existing.deviceId,
+        secret: secret,
+        pairingCode: existing.pairingCode,
+      );
+      await _local.saveSession(refreshed);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 }

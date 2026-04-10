@@ -6,4 +6,7 @@ abstract class AdsRepository {
 
   /// Clears cache and fetches playlist from the network again.
   Future<AdContent> refreshAds();
+
+  /// Ensures current video and next video are locally playable.
+  Future<AdContent> warmupForPlayback(AdContent content, int videoIndex);
 }

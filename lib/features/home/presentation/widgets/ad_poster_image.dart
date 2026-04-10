@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 /// Renders a poster from either an asset path (e.g. assets/images/...) or a network URL.
 /// Uses cacheWidth/cacheHeight for low-RAM TV devices.
@@ -27,19 +28,17 @@ class AdPosterImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isNetworkUrl(url)) {
-      return Image.network(
-        url,
+      return CachedNetworkImage(
+        imageUrl: url,
         fit: fit,
         width: width,
         height: height,
-        cacheWidth: cacheWidth,
-        cacheHeight: cacheHeight,
-        loadingBuilder: (
-          BuildContext context,
-          Widget child,
-          ImageChunkEvent? loadingProgress,
-        ) {
-          if (loadingProgress == null) return child;
+        memCacheWidth: cacheWidth,
+        memCacheHeight: cacheHeight,
+        fadeInDuration: Duration.zero,
+        fadeOutDuration: Duration.zero,
+        filterQuality: FilterQuality.low,
+        placeholder: (BuildContext context, String _) {
           return RepaintBoundary(
             child: SizedBox(
               width: width,
@@ -50,17 +49,17 @@ class AdPosterImage extends StatelessWidget {
             ),
           );
         },
-        errorBuilder: (
-          BuildContext context,
-          Object error,
-          StackTrace? stackTrace,
-        ) {
+        errorWidget: (BuildContext context, String _, Object error) {
           return RepaintBoundary(
             child: SizedBox(
               width: width,
               height: height,
               child: const Center(
-                child: Icon(Icons.broken_image_outlined, color: Colors.white54, size: 48),
+                child: Icon(
+                  Icons.broken_image_outlined,
+                  color: Colors.white54,
+                  size: 48,
+                ),
               ),
             ),
           );

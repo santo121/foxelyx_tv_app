@@ -8,6 +8,7 @@ class VehicleSession {
     this.macAddress,
     this.registeredAtMs,
     this.accessToken,
+    this.secret,
   });
 
   /// Backend device UUID from `/auth/device` `data.device.id`.
@@ -26,6 +27,7 @@ class VehicleSession {
 
   /// JWT from `/auth/device` `data.access_token` after successful pairing.
   final String? accessToken;
+  final String? secret;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
     'deviceId': deviceId,
@@ -34,6 +36,7 @@ class VehicleSession {
     'macAddress': macAddress,
     'registeredAtMs': registeredAtMs,
     'accessToken': accessToken,
+    'secret': secret,
   };
 
   static VehicleSession fromJson(Map<String, dynamic> json) {
@@ -45,11 +48,31 @@ class VehicleSession {
       deviceId: json['deviceId'] as String,
       pairingCode: pairing,
       vehicleId: json['vehicleId'] as String?,
-      macAddress: json['macAddress'] as String? ??
-          json['vehicleId'] as String?,
+      macAddress: json['macAddress'] as String? ?? json['vehicleId'] as String?,
       registeredAtMs: json['registeredAtMs'] as int?,
       accessToken:
           json['accessToken'] as String? ?? json['access_token'] as String?,
+      secret: json['secret'] as String?,
+    );
+  }
+
+  VehicleSession copyWith({
+    String? deviceId,
+    String? pairingCode,
+    String? vehicleId,
+    String? macAddress,
+    int? registeredAtMs,
+    String? accessToken,
+    String? secret,
+  }) {
+    return VehicleSession(
+      deviceId: deviceId ?? this.deviceId,
+      pairingCode: pairingCode ?? this.pairingCode,
+      vehicleId: vehicleId ?? this.vehicleId,
+      macAddress: macAddress ?? this.macAddress,
+      registeredAtMs: registeredAtMs ?? this.registeredAtMs,
+      accessToken: accessToken ?? this.accessToken,
+      secret: secret ?? this.secret,
     );
   }
 }

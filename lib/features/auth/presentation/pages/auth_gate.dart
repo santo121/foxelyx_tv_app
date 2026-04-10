@@ -34,8 +34,8 @@ class _AuthGateState extends State<AuthGate> {
       _error = null;
     });
     try {
-      final VehicleSession? session =
-          await getIt<AuthRepository>().getStoredSession();
+      final VehicleSession? session = await getIt<AuthRepository>()
+          .getStoredSession();
       if (!mounted) return;
       setState(() {
         _session = session;
@@ -79,30 +79,30 @@ class _AuthGateState extends State<AuthGate> {
     if (_error != null) {
       return Scaffold(
         backgroundColor: Colors.black,
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Text(
-                  _error!,
-                  style: const TextStyle(color: Colors.redAccent),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
-                TextButton(
-                  onPressed: () => _checkSession(),
-                  child: const Text('Retry'),
-                ),
-              ],
+        body: FocusScope(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    _error!,
+                    style: const TextStyle(color: Colors.redAccent),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  _GateRetryButton(autofocus: true, onPressed: _checkSession),
+                ],
+              ),
             ),
           ),
         ),
       );
     }
     if (_session != null &&
-        (_session!.accessToken?.isNotEmpty ?? false)) {
+        (_session!.accessToken?.isNotEmpty ?? false) &&
+        (_session!.secret?.isNotEmpty ?? false)) {
       return BlocProvider<HomeCubit>(
         create: (_) {
           final HomeCubit cubit = getIt<HomeCubit>();
@@ -113,5 +113,44 @@ class _AuthGateState extends State<AuthGate> {
       );
     }
     return LoginPage(onLoginSuccess: _onLoginSuccess);
+  }
+}
+
+class _GateRetryButton extends StatelessWidget {
+  const _GateRetryButton({required this.onPressed, this.autofocus = false});
+
+  final VoidCallback onPressed;
+  final bool autofocus;
+
+  @override
+  Widget build(BuildContext context) {
+    return FocusableActionDetector(
+      autofocus: autofocus,
+      actions: <Type, Action<Intent>>{
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (ActivateIntent intent) {
+            onPressed();
+            return null;
+          },
+        ),
+      },
+      child: Builder(
+        builder: (BuildContext context) {
+          final bool isFocused = Focus.of(context).hasFocus;
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            decoration: BoxDecoration(
+              color: isFocused ? Colors.white24 : Colors.white12,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isFocused ? Colors.white : Colors.white30,
+                width: isFocused ? 2 : 1,
+              ),
+            ),
+            child: TextButton(onPressed: onPressed, child: const Text('Retry')),
+          );
+        },
+      ),
+    );
   }
 }

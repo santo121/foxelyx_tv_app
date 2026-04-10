@@ -21,6 +21,30 @@ class RemoteAuthDatasource {
     final String apiDeviceId = paired['deviceId']!;
     final String secret = paired['secret']!;
 
+    return _authenticateDevice(
+      apiDeviceId: apiDeviceId,
+      secret: secret,
+      pairingCode: code,
+    );
+  }
+
+  Future<VehicleSession> authenticateDevice({
+    required String apiDeviceId,
+    required String secret,
+    required String pairingCode,
+  }) {
+    return _authenticateDevice(
+      apiDeviceId: apiDeviceId,
+      secret: secret,
+      pairingCode: pairingCode,
+    );
+  }
+
+  Future<VehicleSession> _authenticateDevice({
+    required String apiDeviceId,
+    required String secret,
+    required String pairingCode,
+  }) async {
     final Uri authUrl = Uri.parse('$_baseUrl/api/auth/device');
     final String authBodyJson = jsonEncode(<String, String>{
       'deviceId': apiDeviceId,
@@ -35,13 +59,15 @@ class RemoteAuthDatasource {
     final http.Response authResponse = await http
         .post(
           authUrl,
-          headers: <String, String>{
-            'Content-Type': 'application/json',
-          },
+          headers: <String, String>{'Content-Type': 'application/json'},
           body: authBodyJson,
         )
-        .timeout(const Duration(seconds: 20));
-    debugLogHttpResponse(authUrl, authResponse.statusCode, body: authResponse.body);
+        .timeout(const Duration(seconds: 5));
+    debugLogHttpResponse(
+      authUrl,
+      authResponse.statusCode,
+      body: authResponse.body,
+    );
 
     final Map<String, dynamic> authBody = _decodeJsonMap(authResponse.body);
     final bool authOk = authBody['success'] as bool? ?? false;
@@ -79,11 +105,12 @@ class RemoteAuthDatasource {
 
     return VehicleSession(
       deviceId: id,
-      pairingCode: code,
+      pairingCode: pairingCode,
       vehicleId: devicePublicId,
       macAddress: null,
       registeredAtMs: DateTime.now().millisecondsSinceEpoch,
       accessToken: accessToken,
+      secret: secret,
     );
   }
 
@@ -101,12 +128,10 @@ class RemoteAuthDatasource {
     final http.Response response = await http
         .post(
           url,
-          headers: <String, String>{
-            'Content-Type': 'application/json',
-          },
+          headers: <String, String>{'Content-Type': 'application/json'},
           body: pairJson,
         )
-        .timeout(const Duration(seconds: 20));
+        .timeout(const Duration(seconds: 5));
     debugLogHttpResponse(url, response.statusCode, body: response.body);
 
     final Map<String, dynamic> body = _decodeJsonMap(response.body);
@@ -125,10 +150,7 @@ class RemoteAuthDatasource {
       throw AuthException('Invalid pairing code');
     }
 
-    return <String, String>{
-      'deviceId': deviceId,
-      'secret': secret,
-    };
+    return <String, String>{'deviceId': deviceId, 'secret': secret};
   }
 
   Map<String, dynamic> _decodeJsonMap(String raw) {

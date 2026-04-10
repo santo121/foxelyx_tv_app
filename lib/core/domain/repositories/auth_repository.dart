@@ -15,4 +15,8 @@ abstract class AuthRepository {
   /// JWT from the last successful `/auth/device` response (WebSocket, API headers).
   /// Null if not logged in or legacy session without a token.
   Future<String?> getAccessToken();
+
+  /// Re-authenticates current device using stored credentials (deviceId + secret).
+  /// Returns true when a new valid auth session is persisted.
+  Future<bool> refreshDeviceAuth();
 }

@@ -42,7 +42,7 @@ Future<void> setupDi() async {
   getIt.registerLazySingleton<PlaylistAdsDatasource>(
     () => PlaylistAdsDatasource(getIt<AuthRepository>()),
   );
-  getIt.registerFactory<CampaignPlaylistSocket>(
+  getIt.registerLazySingleton<CampaignPlaylistSocket>(
     () => DevicesCampaignSocketDatasource(getIt<AuthRepository>()),
   );
   getIt.registerLazySingleton<VideoCacheDatasource>(VideoCacheDatasource.new);
@@ -53,9 +53,6 @@ Future<void> setupDi() async {
     ),
   );
   getIt.registerFactory<HomeCubit>(
-    () => HomeCubit(
-      getIt<AdsRepository>(),
-      getIt<CampaignPlaylistSocket>(),
-    ),
+    () => HomeCubit(getIt<AdsRepository>(), getIt<CampaignPlaylistSocket>()),
   );
 }

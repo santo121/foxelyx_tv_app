@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:video_player/video_player.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import '../cubit/home_cubit.dart';
 import '../cubit/home_state.dart';
@@ -16,8 +19,9 @@ class TvHomePage extends StatefulWidget {
   State<TvHomePage> createState() => _TvHomePageState();
 }
 
-class _TvHomePageState extends State<TvHomePage>
-    with WidgetsBindingObserver {
+class _TvHomePageState extends State<TvHomePage> with WidgetsBindingObserver {
+  String? _lastPrefetchedPosterUrl;
+
   @override
   void initState() {
     super.initState();
@@ -46,37 +50,139 @@ class _TvHomePageState extends State<TvHomePage>
       canPop: false,
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: BlocBuilder<HomeCubit, HomeState>(
-          builder: (BuildContext context, HomeState state) {
-            if (state is HomeLoading) {
-              return const Center(
-                child: CircularProgressIndicator(color: Colors.white),
-              );
-            }
-            if (state is HomeError) {
-              return Center(
-                child: Text(
-                  state.message,
-                  style: const TextStyle(color: Colors.white),
+        body: FocusScope(
+          child: BlocConsumer<HomeCubit, HomeState>(
+            listener: (BuildContext context, HomeState state) {
+              if (state is! HomeLoaded) return;
+              unawaited(_prefetchNextPosterIfNeeded(context, state));
+            },
+            builder: (BuildContext context, HomeState state) {
+              if (state is HomeLoading) {
+                return const _InitialAdsLoadingView();
+              }
+              if (state is HomeError) {
+                return _HomeErrorView(
+                  message: state.message,
+                  onRetry: () => context.read<HomeCubit>().loadAds(),
+                );
+              }
+              if (state is HomeContentReady) {
+                return _HomeLayout(
+                  posterUrls: state.content.posterUrls,
+                  videoController: null,
+                  currentDisplayIndex: 0,
+                );
+              }
+              if (state is HomeLoaded) {
+                return _HomeLayout(
+                  posterUrls: state.content.posterUrls,
+                  videoController: state.videoController,
+                  currentDisplayIndex: state.currentDisplayIndex,
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _prefetchNextPosterIfNeeded(
+    BuildContext context,
+    HomeLoaded state,
+  ) async {
+    final int posterCount = state.content.posterUrls.length;
+    final int totalCount = posterCount + state.content.videoUrls.length;
+    if (posterCount == 0 || totalCount <= 1) return;
+
+    final int nextIndex = (state.currentDisplayIndex + 1) % totalCount;
+    if (nextIndex >= posterCount) return;
+
+    final String posterUrl = state.content.posterUrls[nextIndex];
+    if (posterUrl.toLowerCase().endsWith('.pdf')) return;
+    if (!AdPosterImage.isNetworkUrl(posterUrl)) return;
+    if (_lastPrefetchedPosterUrl == posterUrl) return;
+
+    final Size size = MediaQuery.sizeOf(context);
+    final double dpr = MediaQuery.devicePixelRatioOf(context);
+    final int cacheWidth = (size.width * dpr).clamp(200.0, 1920.0).toInt();
+    final int cacheHeight = (size.height * dpr).clamp(200.0, 1080.0).toInt();
+    final ImageProvider provider = CachedNetworkImageProvider(
+      posterUrl,
+      maxWidth: cacheWidth,
+      maxHeight: cacheHeight,
+    );
+    try {
+      await precacheImage(provider, context);
+      _lastPrefetchedPosterUrl = posterUrl;
+    } catch (_) {
+      // Ignore prefetch failures; active poster will still load on demand.
+    }
+  }
+}
+
+class _HomeErrorView extends StatelessWidget {
+  const _HomeErrorView({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              message,
+              style: const TextStyle(color: Colors.white),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            FocusableActionDetector(
+              autofocus: true,
+              actions: <Type, Action<Intent>>{
+                ActivateIntent: CallbackAction<ActivateIntent>(
+                  onInvoke: (ActivateIntent intent) {
+                    onRetry();
+                    return null;
+                  },
                 ),
-              );
-            }
-            if (state is HomeContentReady) {
-              return _HomeLayout(
-                posterUrls: state.content.posterUrls,
-                videoController: null,
-                currentDisplayIndex: 0,
-              );
-            }
-            if (state is HomeLoaded) {
-              return _HomeLayout(
-                posterUrls: state.content.posterUrls,
-                videoController: state.videoController,
-                currentDisplayIndex: state.currentDisplayIndex,
-              );
-            }
-            return const SizedBox.shrink();
-          },
+              },
+              child: Builder(
+                builder: (BuildContext context) {
+                  final bool hasFocus = Focus.of(context).hasFocus;
+                  return AnimatedScale(
+                    duration: const Duration(milliseconds: 120),
+                    scale: hasFocus ? 1.02 : 1,
+                    child: OutlinedButton(
+                      onPressed: onRetry,
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(
+                          color: hasFocus ? Colors.white : Colors.white30,
+                          width: hasFocus ? 2 : 1,
+                        ),
+                        backgroundColor: hasFocus
+                            ? Colors.white24
+                            : Colors.transparent,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 14,
+                        ),
+                      ),
+                      child: const Text(
+                        'Retry',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -165,5 +271,14 @@ class _VideoPlaceholder extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _InitialAdsLoadingView extends StatelessWidget {
+  const _InitialAdsLoadingView();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(color: Colors.black);
   }
 }

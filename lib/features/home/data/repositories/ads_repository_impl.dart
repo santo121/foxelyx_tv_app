@@ -13,8 +13,6 @@ class AdsRepositoryImpl implements AdsRepository {
   /// returns local paths without calling network or re-resolving.
   AdContent? _cachedResolvedContent;
 
-  /// Resolves every video URL to a local path (cached file or asset).
-  /// Once resolved, subsequent calls return the same cached content — no network, no re-resolve.
   @override
   Future<AdContent> refreshAds() async {
     _cachedResolvedContent = null;
@@ -26,14 +24,31 @@ class AdsRepositoryImpl implements AdsRepository {
     if (_cachedResolvedContent != null) return _cachedResolvedContent!;
 
     final AdContent content = await _playlist.getAds();
-    final List<String> resolved = <String>[];
-    for (final String url in content.videoUrls) {
-      resolved.add(await _videoCache.getLocalPath(url));
+    _cachedResolvedContent = content;
+    return content;
+  }
+
+  @override
+  Future<AdContent> warmupForPlayback(AdContent content, int videoIndex) async {
+    if (content.videoUrls.isEmpty) return content;
+
+    final List<String> resolved = List<String>.from(content.videoUrls);
+    final Set<int> indexesToWarm = <int>{videoIndex};
+
+    for (final int index in indexesToWarm) {
+      if (index < 0 || index >= resolved.length) continue;
+      try {
+        resolved[index] = await _videoCache.getLocalPath(resolved[index]);
+      } catch (_) {
+        // Keep original URL so playback can continue even when caching fails.
+      }
     }
-    _cachedResolvedContent = AdContent(
+
+    final AdContent warmed = AdContent(
       videoUrls: resolved,
       posterUrls: content.posterUrls,
     );
-    return _cachedResolvedContent!;
+    _cachedResolvedContent = warmed;
+    return warmed;
   }
 }

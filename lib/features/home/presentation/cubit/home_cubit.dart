@@ -114,8 +114,12 @@ class HomeCubit extends Cubit<HomeState> {
     try {
       final AdContent content = await _refreshAdsWithAuthRecovery();
       if (isClosed) return;
-      // Queue playlist refresh and apply only at ad boundary.
-      _pendingPlaylistContent = content;
+      if (_shouldApplyPlaylistImmediately()) {
+        await _applyPlaylistImmediately(content);
+      } else {
+        // Queue playlist refresh and apply only at ad boundary.
+        _pendingPlaylistContent = content;
+      }
     } catch (e, st) {
       if (kDebugMode) {
         // ignore: avoid_print
@@ -526,17 +530,41 @@ class HomeCubit extends Cubit<HomeState> {
     final AdContent? pending = _pendingPlaylistContent;
     if (pending == null || isClosed) return false;
     _pendingPlaylistContent = null;
+    _replaceCurrentPlaylist(pending);
+    return true;
+  }
+
+  bool _shouldApplyPlaylistImmediately() {
+    final HomeState current = state;
+    if (current is HomeInitial || current is HomeContentReady) {
+      return true;
+    }
+    if (current is HomeLoaded) {
+      return _isPlaylistEmpty(current.content);
+    }
+    return false;
+  }
+
+  bool _isPlaylistEmpty(AdContent content) =>
+      content.posterUrls.isEmpty && content.videoUrls.isEmpty;
+
+  Future<void> _applyPlaylistImmediately(AdContent content) async {
+    _pendingPlaylistContent = null;
+    _replaceCurrentPlaylist(content);
+  }
+
+  void _replaceCurrentPlaylist(AdContent content) {
+    if (isClosed) return;
     _clearPreparedVideo();
     _rotationTimer?.cancel();
     _rotationTimer = null;
     _removeVideoCompletionListener();
     _removeVideoHealthListener();
     _videoSlotGeneration++;
-    emit(HomeContentReady(content: pending));
+    emit(HomeContentReady(content: content));
     SchedulerBinding.instance.scheduleFrameCallback((_) {
-      unawaited(_applyPendingPlaylistAndStart(pending));
+      unawaited(_applyPendingPlaylistAndStart(content));
     });
-    return true;
   }
 
   Future<void> _applyPendingPlaylistAndStart(AdContent pending) async {

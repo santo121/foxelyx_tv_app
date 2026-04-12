@@ -9,7 +9,7 @@ import '../../domain/campaign_playlist_socket.dart';
 
 /// Socket.IO at `https://api.foxelyx.com` with namespace `/devices`.
 /// [Authorization] uses the stored JWT (`access_token`).
-/// Refreshes playlist on connect and on `campaign.updated` / `campaign.created`.
+/// Refreshes playlist on connect and on create/update ad events.
 class DevicesCampaignSocketDatasource implements CampaignPlaylistSocket {
   DevicesCampaignSocketDatasource(this._auth);
 
@@ -26,6 +26,24 @@ class DevicesCampaignSocketDatasource implements CampaignPlaylistSocket {
   static const Duration _reconnectInterval = Duration(seconds: 5);
   static const Duration _heartbeatInterval = Duration(seconds: 20);
   static const int _maxAttemptsBeforeReauth = 3;
+  static const Set<String> _playlistRefreshEvents = <String>{
+    'campaign.updated',
+    'campaign.created',
+    'campaign.update',
+    'campaign.create',
+    'playlist.updated',
+    'playlist.created',
+    'playlist.update',
+    'playlist.create',
+    'ad.updated',
+    'ad.created',
+    'ad.update',
+    'ad.create',
+    'ads.updated',
+    'ads.created',
+    'ads.update',
+    'ads.create',
+  };
 
   /// Namespace `/devices` — same host as REST ([ApiConfig.host]).
   static const String _socketIoUrl = ApiConfig.socketIoDevicesUrl;
@@ -83,8 +101,9 @@ class DevicesCampaignSocketDatasource implements CampaignPlaylistSocket {
         _startHeartbeat();
         _notifyRefresh();
       });
-      socket.on('campaign.updated', onCampaignEvent);
-      socket.on('campaign.created', onCampaignEvent);
+      for (final String eventName in _playlistRefreshEvents) {
+        socket.on(eventName, onCampaignEvent);
+      }
       socket.on('disconnect', (dynamic data) async {
         if (kDebugMode) {
           // ignore: avoid_print

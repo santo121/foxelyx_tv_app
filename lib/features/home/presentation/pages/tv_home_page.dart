@@ -66,6 +66,12 @@ class _TvHomePageState extends State<TvHomePage> with WidgetsBindingObserver {
                 );
               }
               if (state is HomeContentReady) {
+                final bool isPlaylistEmpty =
+                    state.content.posterUrls.isEmpty &&
+                    state.content.videoUrls.isEmpty;
+                if (isPlaylistEmpty) {
+                  return const _EmptyPlaylistView();
+                }
                 return _HomeLayout(
                   posterUrls: state.content.posterUrls,
                   videoController: null,
@@ -73,6 +79,12 @@ class _TvHomePageState extends State<TvHomePage> with WidgetsBindingObserver {
                 );
               }
               if (state is HomeLoaded) {
+                final bool isPlaylistEmpty =
+                    state.content.posterUrls.isEmpty &&
+                    state.content.videoUrls.isEmpty;
+                if (isPlaylistEmpty) {
+                  return const _EmptyPlaylistView();
+                }
                 return _HomeLayout(
                   posterUrls: state.content.posterUrls,
                   videoController: state.videoController,
@@ -169,10 +181,7 @@ class _HomeErrorView extends StatelessWidget {
                 const SizedBox(height: 12),
                 const Text(
                   'Press Retry to reconnect.',
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 18,
-                  ),
+                  style: TextStyle(color: Colors.white54, fontSize: 18),
                 ),
                 const SizedBox(height: 30),
                 FocusableActionDetector(
@@ -322,6 +331,81 @@ class _VideoPlaceholder extends StatelessWidget {
           child: CircularProgressIndicator(color: Colors.white),
         ),
       ),
+    );
+  }
+}
+
+class _EmptyPlaylistView extends StatelessWidget {
+  const _EmptyPlaylistView();
+  static const String _adsPhoneNumber = '+91 87140 10234';
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double height = constraints.maxHeight;
+        final double dpr = MediaQuery.devicePixelRatioOf(context);
+        final double logoWidth = height * 0.48;
+        final double logoHeight = height * 0.48;
+        final int cacheWidth = (logoWidth * dpr).clamp(120.0, 1280.0).toInt();
+        final int cacheHeight = (logoHeight * dpr).clamp(120.0, 720.0).toInt();
+
+        return Container(
+          color: Colors.black,
+          alignment: Alignment.center,
+          child: RepaintBoundary(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Image.asset(
+                  'assets/logo/foxelyx_logo.png',
+                  width: logoWidth,
+                  height: logoHeight,
+                  cacheWidth: cacheWidth,
+                  cacheHeight: cacheHeight,
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.low,
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Show your ads on this TV',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(Icons.call_rounded, color: Colors.white, size: 32),
+                    SizedBox(width: 10),
+                    Text(
+                      _adsPhoneNumber,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 34,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.0,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'Call now',
+                  style: TextStyle(
+                    color: Colors.white60,
+                    fontSize: 18,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

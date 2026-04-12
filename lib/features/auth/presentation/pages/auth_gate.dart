@@ -55,13 +55,22 @@ class _AuthGateState extends State<AuthGate> {
       _loading = true;
       _error = null;
     });
-    getIt<AuthRepository>().getStoredSession().then((VehicleSession? session) {
-      if (!mounted) return;
-      setState(() {
-        _session = session;
-        _loading = false;
-      });
-    });
+    getIt<AuthRepository>()
+        .getStoredSession()
+        .then((VehicleSession? session) {
+          if (!mounted) return;
+          setState(() {
+            _session = session;
+            _loading = false;
+          });
+        })
+        .catchError((Object error) {
+          if (!mounted) return;
+          setState(() {
+            _loading = false;
+            _error = error.toString();
+          });
+        });
   }
 
   @override
@@ -100,9 +109,12 @@ class _AuthGateState extends State<AuthGate> {
         ),
       );
     }
-    if (_session != null &&
-        (_session!.accessToken?.isNotEmpty ?? false) &&
-        (_session!.secret?.isNotEmpty ?? false)) {
+    final VehicleSession? session = _session;
+    final String routeDeviceId = (session?.vehicleId ?? '').trim();
+    if (session != null &&
+        (session.accessToken?.isNotEmpty ?? false) &&
+        (session.secret?.isNotEmpty ?? false) &&
+        routeDeviceId.isNotEmpty) {
       return BlocProvider<HomeCubit>(
         create: (_) {
           final HomeCubit cubit = getIt<HomeCubit>();

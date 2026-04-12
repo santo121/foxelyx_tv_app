@@ -40,10 +40,12 @@ class _SplashPageState extends State<SplashPage> {
     try {
       final AuthRepository authRepository = getIt<AuthRepository>();
       final VehicleSession? session = await authRepository.getStoredSession();
+      final String routeDeviceId = (session?.vehicleId ?? '').trim();
       final bool hasValidSession =
           session != null &&
           (session.accessToken?.isNotEmpty ?? false) &&
-          (session.secret?.isNotEmpty ?? false);
+          (session.secret?.isNotEmpty ?? false) &&
+          routeDeviceId.isNotEmpty;
 
       if (!hasValidSession) {
         await _waitForMinimumSplash(start);

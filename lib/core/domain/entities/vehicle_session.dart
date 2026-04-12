@@ -11,7 +11,8 @@ class VehicleSession {
     this.secret,
   });
 
-  /// Backend device UUID from `/auth/device` `data.device.id`.
+  /// Device id issued by `/devices/pair` `data.deviceId`.
+  /// Used for `/auth/device` re-auth with the stored secret.
   final String deviceId;
 
   /// Code entered at login to pair this device with a vehicle.

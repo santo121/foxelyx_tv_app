@@ -1,0 +1,1 @@
+class MissingPairSecretException implements Exception {}

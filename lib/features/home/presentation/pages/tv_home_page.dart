@@ -36,8 +36,7 @@ class _TvHomePageState extends State<TvHomePage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
+    if (state == AppLifecycleState.paused) {
       context.read<HomeCubit>().pausePlayback();
     } else if (state == AppLifecycleState.resumed) {
       context.read<HomeCubit>().resumePlayback();
@@ -130,59 +129,112 @@ class _HomeErrorView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Text(
-              message,
-              style: const TextStyle(color: Colors.white),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            FocusableActionDetector(
-              autofocus: true,
-              actions: <Type, Action<Intent>>{
-                ActivateIntent: CallbackAction<ActivateIntent>(
-                  onInvoke: (ActivateIntent intent) {
-                    onRetry();
-                    return null;
-                  },
+    return Container(
+      color: const Color(0xFF070B14),
+      alignment: Alignment.center,
+      child: RepaintBoundary(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const Icon(
+                  Icons.wifi_off_rounded,
+                  color: Colors.white70,
+                  size: 74,
                 ),
-              },
-              child: Builder(
-                builder: (BuildContext context) {
-                  final bool hasFocus = Focus.of(context).hasFocus;
-                  return AnimatedScale(
-                    duration: const Duration(milliseconds: 120),
-                    scale: hasFocus ? 1.02 : 1,
-                    child: OutlinedButton(
-                      onPressed: onRetry,
-                      style: OutlinedButton.styleFrom(
-                        side: BorderSide(
-                          color: hasFocus ? Colors.white : Colors.white30,
-                          width: hasFocus ? 2 : 1,
-                        ),
-                        backgroundColor: hasFocus
-                            ? Colors.white24
-                            : Colors.transparent,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
-                          vertical: 14,
-                        ),
-                      ),
-                      child: const Text(
-                        'Retry',
-                        style: TextStyle(color: Colors.white),
-                      ),
+                const SizedBox(height: 20),
+                const Text(
+                  'Connection Problem',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 34,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  message,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 22,
+                    height: 1.35,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Press Retry to reconnect.',
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 18,
+                  ),
+                ),
+                const SizedBox(height: 30),
+                FocusableActionDetector(
+                  autofocus: true,
+                  actions: <Type, Action<Intent>>{
+                    ActivateIntent: CallbackAction<ActivateIntent>(
+                      onInvoke: (ActivateIntent intent) {
+                        onRetry();
+                        return null;
+                      },
                     ),
-                  );
-                },
-              ),
+                  },
+                  child: Builder(
+                    builder: (BuildContext context) {
+                      final bool hasFocus = Focus.of(context).hasFocus;
+                      return AnimatedScale(
+                        duration: const Duration(milliseconds: 120),
+                        scale: hasFocus ? 1.02 : 1,
+                        child: ElevatedButton.icon(
+                          onPressed: onRetry,
+                          icon: const Icon(Icons.refresh_rounded, size: 22),
+                          label: const Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            child: Text(
+                              'Retry',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            elevation: 0,
+                            foregroundColor: const Color(0xFF06122A),
+                            backgroundColor: hasFocus
+                                ? const Color(0xFFE4EEFF)
+                                : const Color(0xFFD5E3FF),
+                            side: BorderSide(
+                              color: hasFocus
+                                  ? const Color(0xFF8CB0FF)
+                                  : Colors.transparent,
+                              width: 2,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 26,
+                              vertical: 16,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );

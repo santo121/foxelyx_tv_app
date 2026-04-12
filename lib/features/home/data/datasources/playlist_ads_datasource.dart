@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../../../../core/config/api_config.dart';
 import '../../../../core/domain/repositories/auth_repository.dart';
 import '../../domain/entities/ad_content.dart';
+import '../../domain/exceptions/playlist_auth_required_exception.dart';
 
 /// Fetches the ad playlist: `GET /api/devices/:deviceId/playlist`.
 const String _playlistBaseHost = ApiConfig.host;
@@ -49,7 +50,10 @@ class PlaylistAdsDatasource {
         )
         .timeout(const Duration(seconds: 5));
 
-    if (response.statusCode == 401 || response.statusCode == 403) {
+    if (response.statusCode == 400 || response.statusCode == 401) {
+      throw PlaylistAuthRequiredException(response.statusCode);
+    }
+    if (response.statusCode == 403) {
       throw Exception('Playlist unauthorized. Sign in again.');
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {

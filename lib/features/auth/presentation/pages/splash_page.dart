@@ -9,6 +9,7 @@ import '../../../../core/domain/repositories/auth_repository.dart';
 import '../../../home/domain/campaign_playlist_socket.dart';
 import '../../../home/domain/entities/ad_content.dart';
 import '../../../home/domain/entities/preloaded_ads_holder.dart';
+import '../../../home/domain/exceptions/playlist_auth_required_exception.dart';
 import '../../../home/domain/repositories/ads_repository.dart';
 import '../../../home/presentation/cubit/home_cubit.dart';
 import '../../../home/presentation/pages/tv_home_page.dart';
@@ -55,12 +56,18 @@ class _SplashPageState extends State<SplashPage> {
 
       await campaignSocket.start(
         onPlaylistRefresh: () {
-          unawaited(_fetchPlaylistAndPrimeInitialAd(adsRepository));
+          _onSocketPlaylistRefresh(
+            adsRepository: adsRepository,
+            authRepository: authRepository,
+            campaignSocket: campaignSocket,
+          );
         },
       );
       try {
         await _fetchPlaylistAndPrimeInitialAd(
-          adsRepository,
+          repository: adsRepository,
+          authRepository: authRepository,
+          campaignSocket: campaignSocket,
         ).timeout(_maxBootstrapFetchWait);
       } catch (_) {
         // Don't block splash too long; HomeCubit can continue with direct stream.
@@ -73,12 +80,48 @@ class _SplashPageState extends State<SplashPage> {
     }
   }
 
-  Future<void> _fetchPlaylistAndPrimeInitialAd(AdsRepository repository) async {
+  void _onSocketPlaylistRefresh({
+    required AdsRepository adsRepository,
+    required AuthRepository authRepository,
+    required CampaignPlaylistSocket campaignSocket,
+  }) {
+    unawaited(
+      _fetchPlaylistAndPrimeInitialAd(
+        repository: adsRepository,
+        authRepository: authRepository,
+        campaignSocket: campaignSocket,
+      ),
+    );
+  }
+
+  Future<void> _fetchPlaylistAndPrimeInitialAd({
+    required AdsRepository repository,
+    required AuthRepository authRepository,
+    required CampaignPlaylistSocket campaignSocket,
+  }) async {
     if (_isPrimingAds) return;
     _isPrimingAds = true;
     try {
       final AdContent content = await repository.refreshAds();
       PreloadedAdsHolder.instance.set(content);
+    } on PlaylistAuthRequiredException {
+      final bool refreshed = await authRepository.refreshDeviceAuth();
+      if (!refreshed) return;
+      await campaignSocket.start(
+        onPlaylistRefresh: () {
+          _onSocketPlaylistRefresh(
+            adsRepository: repository,
+            authRepository: authRepository,
+            campaignSocket: campaignSocket,
+          );
+        },
+      );
+      try {
+        final AdContent retried = await repository.refreshAds();
+        PreloadedAdsHolder.instance.set(retried);
+      } catch (_) {
+        // Best-effort preload only; HomeCubit will continue recovery in home flow.
+      }
     } finally {
       _isPrimingAds = false;
     }

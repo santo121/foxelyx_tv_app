@@ -91,20 +91,18 @@ class RemoteAuthDatasource {
     final String? accessToken = authData['access_token'] as String?;
     final Map<String, dynamic>? device =
         authData['device'] as Map<String, dynamic>?;
-    final String? id = device?['id'] as String?;
     final String? devicePublicId = device?['deviceId'] as String?;
 
     if (accessToken == null ||
         accessToken.isEmpty ||
-        id == null ||
-        id.isEmpty ||
         devicePublicId == null ||
         devicePublicId.isEmpty) {
       throw AuthException('Authentication failed. Please try again.');
     }
 
     return VehicleSession(
-      deviceId: id,
+      // Persist the device id issued by `/api/devices/pair` for re-auth calls.
+      deviceId: apiDeviceId,
       pairingCode: pairingCode,
       vehicleId: devicePublicId,
       macAddress: null,

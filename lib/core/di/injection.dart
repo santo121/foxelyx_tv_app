@@ -53,6 +53,10 @@ Future<void> setupDi() async {
     ),
   );
   getIt.registerFactory<HomeCubit>(
-    () => HomeCubit(getIt<AdsRepository>(), getIt<CampaignPlaylistSocket>()),
+    () => HomeCubit(
+      getIt<AdsRepository>(),
+      getIt<CampaignPlaylistSocket>(),
+      getIt<AuthRepository>(),
+    ),
   );
 }

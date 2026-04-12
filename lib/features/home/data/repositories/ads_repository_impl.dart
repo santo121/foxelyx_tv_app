@@ -24,6 +24,11 @@ class AdsRepositoryImpl implements AdsRepository {
     if (_cachedResolvedContent != null) return _cachedResolvedContent!;
 
     final AdContent content = await _playlist.getAds();
+    try {
+      await _videoCache.purgeMissingFrom(content.videoUrls.toSet());
+    } catch (_) {
+      // Keep fetch resilient even if stale-cache purge fails.
+    }
     _cachedResolvedContent = content;
     return content;
   }
@@ -50,5 +55,16 @@ class AdsRepositoryImpl implements AdsRepository {
     );
     _cachedResolvedContent = warmed;
     return warmed;
+  }
+
+  @override
+  Future<void> cachePlayedVideo(String url) async {
+    if (!url.startsWith('http')) return;
+    await _videoCache.cacheVideoIfNeeded(url);
+  }
+
+  @override
+  Future<void> purgeMissingCachedVideos(Set<String> activeVideoUrls) async {
+    await _videoCache.purgeMissingFrom(activeVideoUrls);
   }
 }

@@ -6,8 +6,10 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../../../core/domain/repositories/auth_repository.dart';
 import '../../domain/campaign_playlist_socket.dart';
 import '../../domain/entities/ad_content.dart';
+import '../../domain/exceptions/playlist_auth_required_exception.dart';
 import '../../domain/entities/preloaded_ads_holder.dart';
 import '../../domain/repositories/ads_repository.dart';
 import 'home_state.dart';
@@ -15,25 +17,44 @@ import 'home_state.dart';
 /// Single video controller at a time; init next when advancing to next video slot.
 /// Posters and videos are shown in order: each poster 20s, then each video for its duration.
 class HomeCubit extends Cubit<HomeState> {
-  HomeCubit(this._adsRepository, this._campaignSocket)
+  HomeCubit(this._adsRepository, this._campaignSocket, this._authRepository)
     : super(const HomeInitial());
 
   final AdsRepository _adsRepository;
   final CampaignPlaylistSocket _campaignSocket;
+  final AuthRepository _authRepository;
   static const Duration _posterDuration = Duration(seconds: 20);
   static const Duration _warmupTimeout = Duration(seconds: 8);
-  static const Duration _videoInitializeTimeout = Duration(seconds: 12);
+  static const Duration _videoInitializeTimeout = Duration(seconds: 45);
+  static const Duration _videoInitLockWait = Duration(seconds: 2);
+  static const Duration _videoControllerReleaseGap = Duration(
+    milliseconds: 300,
+  );
+  static const Duration _videoDurationSafetyBuffer = Duration(seconds: 10);
+  static const Duration _unknownDurationFallback = Duration(minutes: 40);
+  static const int _maxVideoRetryCount = 3;
+  static const Duration _videoRetryDelay = Duration(milliseconds: 1500);
+  static const Duration _videoStallRecoveryTimeout = Duration(seconds: 20);
+  static const Duration _nearEndTolerance = Duration(seconds: 2);
+  static const bool _enableNextVideoPreload = false;
   Timer? _rotationTimer;
   VoidCallback? _videoErrorListener;
+  VoidCallback? _videoHealthListener;
   VoidCallback? _videoCompletionListener;
   VideoPlayerController? _videoCompletionController;
+  VideoPlayerController? _videoHealthController;
+  Timer? _videoStallTimer;
   int _videoSlotGeneration = 0;
   AdContent? _pendingPlaylistContent;
   bool _isRefreshInFlight = false;
   VideoPlayerController? _preparedVideoController;
   int? _preparedVideoDisplayIndex;
   bool _isPreparingVideo = false;
+  bool _isInitializingVideoController = false;
+  bool _isAuthRecoveryInFlight = false;
+  bool _isPausedByLifecycle = false;
   Timer? _initialLoadingIndicatorTimer;
+  final Map<String, int> _videoRetryByUrl = <String, int>{};
 
   Future<void> loadAds() async {
     _initialLoadingIndicatorTimer?.cancel();
@@ -46,14 +67,17 @@ class HomeCubit extends Cubit<HomeState> {
       if (preloaded != null) {
         content = preloaded;
       } else {
-        _initialLoadingIndicatorTimer = Timer(const Duration(milliseconds: 1200), () {
-          if (isClosed) return;
-          final HomeState current = state;
-          if (current is HomeInitial) {
-            emit(const HomeLoading());
-          }
-        });
-        content = await _adsRepository.getAds();
+        _initialLoadingIndicatorTimer = Timer(
+          const Duration(milliseconds: 1200),
+          () {
+            if (isClosed) return;
+            final HomeState current = state;
+            if (current is HomeInitial) {
+              emit(const HomeLoading());
+            }
+          },
+        );
+        content = await _getAdsWithAuthRecovery();
       }
       if (isClosed) return;
       _initialLoadingIndicatorTimer?.cancel();
@@ -77,7 +101,7 @@ class HomeCubit extends Cubit<HomeState> {
         // ignore: avoid_print
         print('HomeCubit.loadAds error: $e\n$st');
       }
-      if (!isClosed) emit(HomeError(e.toString()));
+      if (!isClosed) emit(HomeError(_toUserMessage(e)));
     }
   }
 
@@ -88,7 +112,7 @@ class HomeCubit extends Cubit<HomeState> {
     if (_isRefreshInFlight) return;
     _isRefreshInFlight = true;
     try {
-      final AdContent content = await _adsRepository.refreshAds();
+      final AdContent content = await _refreshAdsWithAuthRecovery();
       if (isClosed) return;
       // Queue playlist refresh and apply only at ad boundary.
       _pendingPlaylistContent = content;
@@ -99,6 +123,45 @@ class HomeCubit extends Cubit<HomeState> {
       }
     } finally {
       _isRefreshInFlight = false;
+    }
+  }
+
+  Future<AdContent> _getAdsWithAuthRecovery() async {
+    try {
+      return await _adsRepository.getAds();
+    } on PlaylistAuthRequiredException {
+      final bool recovered = await _recoverAuthAndStartSocket();
+      if (!recovered) rethrow;
+      return _adsRepository.refreshAds();
+    }
+  }
+
+  Future<AdContent> _refreshAdsWithAuthRecovery() async {
+    try {
+      return await _adsRepository.refreshAds();
+    } on PlaylistAuthRequiredException {
+      final bool recovered = await _recoverAuthAndStartSocket();
+      if (!recovered) rethrow;
+      return _adsRepository.refreshAds();
+    }
+  }
+
+  Future<bool> _recoverAuthAndStartSocket() async {
+    if (_isAuthRecoveryInFlight) return false;
+    _isAuthRecoveryInFlight = true;
+    try {
+      final bool refreshed = await _authRepository.refreshDeviceAuth();
+      if (!refreshed || isClosed) return false;
+      await _campaignSocket.start(
+        onPlaylistRefresh: () {
+          unawaited(refreshPlaylistFromServer());
+        },
+      );
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      _isAuthRecoveryInFlight = false;
     }
   }
 
@@ -155,29 +218,41 @@ class HomeCubit extends Cubit<HomeState> {
       final String url = warmedContent.videoUrls[videoIndex];
       controller = _controllerForUrl(url);
       try {
-        await controller.initialize().timeout(_videoInitializeTimeout);
+        final bool acquired = await _acquireVideoInitLock(waitIfBusy: true);
+        if (!acquired) {
+          await _safeDisposeVideoController(controller);
+          if (isClosed) return;
+          _skipToNextVideoOrPosters(warmedContent, videoIndex);
+          return;
+        }
+        try {
+          await Future<void>.delayed(_videoControllerReleaseGap);
+          await controller.initialize().timeout(_videoInitializeTimeout);
+        } finally {
+          _releaseVideoInitLock();
+        }
       } on TimeoutException catch (e, st) {
         if (kDebugMode) {
           // ignore: avoid_print
           print('HomeCubit._playVideoAt timeout for $url: $e\n$st');
         }
-        controller.dispose();
+        await _safeDisposeVideoController(controller);
         if (isClosed) return;
-        _skipToNextVideoOrPosters(warmedContent, videoIndex);
+        unawaited(_retryCurrentVideoOrSkip(warmedContent, videoIndex));
         return;
       } catch (e, st) {
         if (kDebugMode) {
           // ignore: avoid_print
           print('HomeCubit._playVideoAt error for $url: $e\n$st');
         }
-        controller.dispose();
+        await _safeDisposeVideoController(controller);
         if (isClosed) return;
-        _skipToNextVideoOrPosters(warmedContent, videoIndex);
+        unawaited(_retryCurrentVideoOrSkip(warmedContent, videoIndex));
         return;
       }
     }
     if (isClosed) {
-      controller.dispose();
+      await _safeDisposeVideoController(controller);
       return;
     }
     controller.setLooping(false);
@@ -192,29 +267,37 @@ class HomeCubit extends Cubit<HomeState> {
       if (!controller!.value.hasError || isClosed) return;
       controller.removeListener(_videoErrorListener!);
       _videoErrorListener = null;
-      controller.dispose();
-      final s = state;
-      if (s is HomeLoaded && s.videoController == controller) {
-        emit(
-          HomeLoaded(
-            content: warmedContent,
-            currentDisplayIndex: displayIndex,
-            videoController: null,
-          ),
-        );
-      }
-      _skipToNextVideoOrPosters(warmedContent, videoIndex);
+      unawaited(
+        _handleVideoPlaybackError(
+          controller: controller,
+          content: warmedContent,
+          displayIndex: displayIndex,
+          videoIndex: videoIndex,
+        ),
+      );
     };
     controller.addListener(_videoErrorListener!);
     controller.play();
-    unawaited(_prepareNextDisplay(warmedContent, displayIndex));
+    _attachVideoHealthMonitor(
+      controller: controller,
+      content: warmedContent,
+      displayIndex: displayIndex,
+    );
+    if (videoIndex < warmedContent.videoUrls.length) {
+      _videoRetryByUrl.remove(warmedContent.videoUrls[videoIndex]);
+    }
+    if (_enableNextVideoPreload) {
+      unawaited(_prepareNextDisplay(warmedContent, displayIndex));
+    }
     _scheduleNext(warmedContent, controller, displayIndex);
   }
 
   /// Pause video and rotation when app goes to background (no background playing).
   void pausePlayback() {
+    _isPausedByLifecycle = true;
     _rotationTimer?.cancel();
     _rotationTimer = null;
+    _cancelVideoStallMonitor();
     final s = state;
     if (s is HomeLoaded && s.videoController != null) {
       s.videoController!.pause();
@@ -223,10 +306,16 @@ class HomeCubit extends Cubit<HomeState> {
 
   /// Resume video and rotation when app returns to foreground.
   void resumePlayback() {
+    _isPausedByLifecycle = false;
     final s = state;
     if (s is! HomeLoaded) return;
     if (s.videoController != null) {
       s.videoController!.play();
+      _attachVideoHealthMonitor(
+        controller: s.videoController!,
+        content: s.content,
+        displayIndex: s.currentDisplayIndex,
+      );
       _scheduleNext(s.content, s.videoController, s.currentDisplayIndex);
     } else {
       _scheduleNext(s.content, null, s.currentDisplayIndex);
@@ -242,9 +331,77 @@ class HomeCubit extends Cubit<HomeState> {
     _videoCompletionController = null;
   }
 
+  void _removeVideoHealthListener() {
+    _cancelVideoStallMonitor();
+    if (_videoHealthListener != null && _videoHealthController != null) {
+      _videoHealthController!.removeListener(_videoHealthListener!);
+    }
+    _videoHealthListener = null;
+    _videoHealthController = null;
+  }
+
+  void _cancelVideoStallMonitor() {
+    _videoStallTimer?.cancel();
+    _videoStallTimer = null;
+  }
+
+  void _attachVideoHealthMonitor({
+    required VideoPlayerController controller,
+    required AdContent content,
+    required int displayIndex,
+  }) {
+    _removeVideoHealthListener();
+    _videoHealthController = controller;
+    _videoHealthListener = () {
+      if (isClosed || _isPausedByLifecycle) {
+        _cancelVideoStallMonitor();
+        return;
+      }
+      final VideoPlayerValue value = controller.value;
+      if (!value.isInitialized || value.isCompleted || value.hasError) {
+        _cancelVideoStallMonitor();
+        return;
+      }
+      final bool nearEnd =
+          value.duration > Duration.zero &&
+          value.position >= (value.duration - _nearEndTolerance);
+      final bool stalled =
+          !nearEnd &&
+          (value.isBuffering ||
+              (!value.isPlaying && value.position > Duration.zero));
+      if (!stalled) {
+        _cancelVideoStallMonitor();
+        return;
+      }
+      if (_videoStallTimer != null) return;
+      _videoStallTimer = Timer(_videoStallRecoveryTimeout, () {
+        _videoStallTimer = null;
+        if (isClosed || _isPausedByLifecycle) return;
+        final HomeState current = state;
+        if (current is! HomeLoaded || current.videoController != controller) {
+          return;
+        }
+        final int posterCount = content.posterUrls.length;
+        final int videoIndex = displayIndex - posterCount;
+        if (videoIndex < 0 || videoIndex >= content.videoUrls.length) return;
+        if (kDebugMode) {
+          // ignore: avoid_print
+          print(
+            'HomeCubit detected stalled video. Triggering recovery for index=$videoIndex',
+          );
+        }
+        unawaited(_retryCurrentVideoOrSkip(content, videoIndex));
+      });
+    };
+    controller.addListener(_videoHealthListener!);
+  }
+
   /// When a video fails to play, try the next video or return to posters.
   void _skipToNextVideoOrPosters(AdContent content, int failedVideoIndex) {
     if (isClosed) return;
+    if (failedVideoIndex >= 0 && failedVideoIndex < content.videoUrls.length) {
+      _videoRetryByUrl.remove(content.videoUrls[failedVideoIndex]);
+    }
     final int videoCount = content.videoUrls.length;
     if (failedVideoIndex + 1 < videoCount) {
       _playVideoAt(content, failedVideoIndex + 1);
@@ -303,45 +460,59 @@ class HomeCubit extends Cubit<HomeState> {
       _rotationTimer?.cancel();
       _rotationTimer = null;
       _removeVideoCompletionListener();
-      _finishVideoSlotAndAdvance(content, controller, videoIndex, slot);
+      unawaited(
+        _finishVideoSlotAndAdvance(content, controller, videoIndex, slot),
+      );
     };
     controller.addListener(_videoCompletionListener!);
 
     final Duration videoDuration = controller.value.duration;
     final Duration fallback = videoDuration > Duration.zero
-        ? videoDuration + const Duration(seconds: 3)
-        : const Duration(minutes: 2);
+        ? videoDuration + _videoDurationSafetyBuffer
+        : _unknownDurationFallback;
     _rotationTimer = Timer(fallback, () {
       if (isClosed) return;
       if (slot != _videoSlotGeneration) return;
       _rotationTimer = null;
       _removeVideoCompletionListener();
-      _finishVideoSlotAndAdvance(content, controller, videoIndex, slot);
+      unawaited(
+        _finishVideoSlotAndAdvance(content, controller, videoIndex, slot),
+      );
     });
   }
 
-  void _finishVideoSlotAndAdvance(
+  Future<void> _finishVideoSlotAndAdvance(
     AdContent content,
     VideoPlayerController controller,
     int videoIndex,
     int slot,
-  ) {
+  ) async {
     if (isClosed) return;
     if (slot != _videoSlotGeneration) return;
+    if (videoIndex >= 0 && videoIndex < content.videoUrls.length) {
+      unawaited(_cachePlayedVideoBestEffort(content.videoUrls[videoIndex]));
+    }
     _videoSlotGeneration++;
+    _removeVideoHealthListener();
     if (_videoErrorListener != null) {
       controller.removeListener(_videoErrorListener!);
       _videoErrorListener = null;
     }
-    controller.pause();
-    controller.seekTo(Duration.zero);
-    controller.dispose();
+    try {
+      await controller.pause();
+      await controller.seekTo(Duration.zero);
+    } catch (_) {}
+    await _safeDisposeVideoController(controller);
+    await Future<void>.delayed(_videoControllerReleaseGap);
     if (_applyPendingPlaylistIfAny()) return;
 
     final int posterCount = content.posterUrls.length;
     final int videoCount = content.videoUrls.length;
 
     if (videoIndex + 1 < videoCount) {
+      if (videoIndex >= 0 && videoIndex < content.videoUrls.length) {
+        _videoRetryByUrl.remove(content.videoUrls[videoIndex]);
+      }
       _playVideoAt(content, videoIndex + 1);
     } else if (posterCount > 0) {
       emit(HomeLoaded(content: content, currentDisplayIndex: 0));
@@ -359,13 +530,39 @@ class HomeCubit extends Cubit<HomeState> {
     _rotationTimer?.cancel();
     _rotationTimer = null;
     _removeVideoCompletionListener();
+    _removeVideoHealthListener();
     _videoSlotGeneration++;
     emit(HomeContentReady(content: pending));
     SchedulerBinding.instance.scheduleFrameCallback((_) {
-      if (isClosed) return;
-      _startRotation(pending);
+      unawaited(_applyPendingPlaylistAndStart(pending));
     });
     return true;
+  }
+
+  Future<void> _applyPendingPlaylistAndStart(AdContent pending) async {
+    if (isClosed) return;
+    await _purgeStaleVideoCacheBestEffort(pending);
+    if (isClosed) return;
+    _startRotation(pending);
+  }
+
+  Future<void> _purgeStaleVideoCacheBestEffort(AdContent pending) async {
+    try {
+      await _adsRepository
+          .purgeMissingCachedVideos(pending.videoUrls.toSet())
+          .timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // Keep playback flow uninterrupted if purge fails.
+    }
+  }
+
+  Future<void> _cachePlayedVideoBestEffort(String url) async {
+    if (!url.startsWith('http')) return;
+    try {
+      await _adsRepository.cachePlayedVideo(url);
+    } catch (_) {
+      // Keep playback flow uninterrupted if caching fails.
+    }
   }
 
   int _totalDisplayCount(AdContent content) =>
@@ -378,7 +575,8 @@ class HomeCubit extends Cubit<HomeState> {
   }
 
   Future<void> _prepareNextDisplay(AdContent content, int currentIndex) async {
-    if (isClosed || _isPreparingVideo) return;
+    if (!_enableNextVideoPreload) return;
+    if (isClosed || _isPreparingVideo || _isInitializingVideoController) return;
     final int total = _totalDisplayCount(content);
     if (total <= 1 || content.videoUrls.isEmpty) return;
 
@@ -407,9 +605,18 @@ class HomeCubit extends Cubit<HomeState> {
       if (isClosed || videoIndex >= warmedContent.videoUrls.length) return;
       final String url = warmedContent.videoUrls[videoIndex];
       final VideoPlayerController prepared = _controllerForUrl(url);
-      await prepared.initialize().timeout(_videoInitializeTimeout);
+      final bool acquired = await _acquireVideoInitLock();
+      if (!acquired) {
+        await _safeDisposeVideoController(prepared);
+        return;
+      }
+      try {
+        await prepared.initialize().timeout(_videoInitializeTimeout);
+      } finally {
+        _releaseVideoInitLock();
+      }
       if (isClosed) {
-        prepared.dispose();
+        await _safeDisposeVideoController(prepared);
         return;
       }
       prepared.setLooping(false);
@@ -428,10 +635,35 @@ class HomeCubit extends Cubit<HomeState> {
   VideoPlayerController? _consumePreparedVideoIfMatches(int displayIndex) {
     final VideoPlayerController? prepared = _preparedVideoController;
     if (prepared == null) return null;
-    if (_preparedVideoDisplayIndex != displayIndex) return null;
+    if (_preparedVideoDisplayIndex != displayIndex) {
+      _clearPreparedVideo();
+      return null;
+    }
     _preparedVideoController = null;
     _preparedVideoDisplayIndex = null;
     return prepared;
+  }
+
+  Future<bool> _acquireVideoInitLock({bool waitIfBusy = false}) async {
+    if (!waitIfBusy) {
+      if (_isInitializingVideoController) return false;
+      _isInitializingVideoController = true;
+      return true;
+    }
+
+    final Stopwatch stopwatch = Stopwatch()..start();
+    while (_isInitializingVideoController &&
+        stopwatch.elapsed < _videoInitLockWait) {
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      if (isClosed) return false;
+    }
+    if (_isInitializingVideoController) return false;
+    _isInitializingVideoController = true;
+    return true;
+  }
+
+  void _releaseVideoInitLock() {
+    _isInitializingVideoController = false;
   }
 
   void _clearPreparedVideo() {
@@ -439,8 +671,81 @@ class HomeCubit extends Cubit<HomeState> {
     _preparedVideoController = null;
     _preparedVideoDisplayIndex = null;
     if (prepared != null) {
-      prepared.dispose();
+      unawaited(_safeDisposeVideoController(prepared));
     }
+  }
+
+  Future<void> _handleVideoPlaybackError({
+    required VideoPlayerController controller,
+    required AdContent content,
+    required int displayIndex,
+    required int videoIndex,
+  }) async {
+    _removeVideoHealthListener();
+    await _safeDisposeVideoController(controller);
+    final HomeState s = state;
+    if (s is HomeLoaded && s.videoController == controller && !isClosed) {
+      emit(
+        HomeLoaded(
+          content: content,
+          currentDisplayIndex: displayIndex,
+          videoController: null,
+        ),
+      );
+    }
+    if (!isClosed) {
+      unawaited(_retryCurrentVideoOrSkip(content, videoIndex));
+    }
+  }
+
+  Future<void> _retryCurrentVideoOrSkip(
+    AdContent content,
+    int videoIndex,
+  ) async {
+    if (isClosed || videoIndex < 0 || videoIndex >= content.videoUrls.length) {
+      return;
+    }
+    final String url = content.videoUrls[videoIndex];
+    final int attempts = _videoRetryByUrl[url] ?? 0;
+    if (attempts >= _maxVideoRetryCount) {
+      _videoRetryByUrl.remove(url);
+      _skipToNextVideoOrPosters(content, videoIndex);
+      return;
+    }
+    _videoRetryByUrl[url] = attempts + 1;
+    if (kDebugMode) {
+      // ignore: avoid_print
+      print(
+        'HomeCubit retrying video ($videoIndex) attempt ${attempts + 1}/$_maxVideoRetryCount: $url',
+      );
+    }
+    await Future<void>.delayed(_videoRetryDelay);
+    if (isClosed) return;
+    _playVideoAt(content, videoIndex);
+  }
+
+  Future<void> _safeDisposeVideoController(
+    VideoPlayerController controller,
+  ) async {
+    try {
+      await controller.dispose();
+    } catch (_) {}
+  }
+
+  String _toUserMessage(Object error) {
+    if (error is TimeoutException) {
+      return 'The connection is slow. Please check your network and try again.';
+    }
+    if (error is SocketException) {
+      return 'No internet connection. Please connect to a network and retry.';
+    }
+    if (error is PlaylistAuthRequiredException) {
+      return 'Your session expired. Please sign in again.';
+    }
+    if (error is StateError) {
+      return 'Device setup is incomplete. Please sign in and try again.';
+    }
+    return 'Unable to load ads right now. Please try again.';
   }
 
   @override
@@ -448,10 +753,12 @@ class HomeCubit extends Cubit<HomeState> {
     await _campaignSocket.dispose();
     _rotationTimer?.cancel();
     _rotationTimer = null;
+    _removeVideoHealthListener();
     _initialLoadingIndicatorTimer?.cancel();
     _initialLoadingIndicatorTimer = null;
     _removeVideoCompletionListener();
     _clearPreparedVideo();
+    _isInitializingVideoController = false;
     final state = this.state;
     if (state is HomeLoaded && state.videoController != null) {
       final c = state.videoController!;
@@ -459,7 +766,7 @@ class HomeCubit extends Cubit<HomeState> {
         c.removeListener(_videoErrorListener!);
         _videoErrorListener = null;
       }
-      c.dispose();
+      await _safeDisposeVideoController(c);
     }
     return super.close();
   }

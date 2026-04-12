@@ -9,6 +9,13 @@ class AuthRepositoryImpl implements AuthRepository {
 
   final LocalAuthDatasource _local;
   final RemoteAuthDatasource _remote;
+  static final RegExp _uuidPattern = RegExp(
+    r'^[0-9a-fA-F]{8}-'
+    r'[0-9a-fA-F]{4}-'
+    r'[0-9a-fA-F]{4}-'
+    r'[0-9a-fA-F]{4}-'
+    r'[0-9a-fA-F]{12}$',
+  );
 
   @override
   Future<VehicleSession?> getStoredSession() => _local.getSession();
@@ -32,10 +39,17 @@ class AuthRepositoryImpl implements AuthRepository {
     if (existing == null) return false;
     final String? secret = existing.secret;
     if (secret == null || secret.isEmpty) return false;
-    if (existing.deviceId.isEmpty) return false;
+    final String storedDeviceId = existing.deviceId.trim();
+    final String fallbackDeviceId = (existing.vehicleId ?? '').trim();
+    final bool looksLikeLegacyBackendUuid = _uuidPattern.hasMatch(storedDeviceId);
+    final String apiDeviceId =
+        looksLikeLegacyBackendUuid && fallbackDeviceId.isNotEmpty
+        ? fallbackDeviceId
+        : (storedDeviceId.isNotEmpty ? storedDeviceId : fallbackDeviceId);
+    if (apiDeviceId.isEmpty) return false;
     try {
       final VehicleSession refreshed = await _remote.authenticateDevice(
-        apiDeviceId: existing.deviceId,
+        apiDeviceId: apiDeviceId,
         secret: secret,
         pairingCode: existing.pairingCode,
       );

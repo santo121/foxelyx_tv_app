@@ -4,6 +4,20 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
+class CachedVideoEntry {
+  const CachedVideoEntry({
+    required this.url,
+    required this.localPath,
+    required this.downloadedAt,
+    required this.lastAccessedAt,
+  });
+
+  final String url;
+  final String localPath;
+  final int downloadedAt;
+  final int lastAccessedAt;
+}
+
 /// Local SQLite database storing network video URL -> local file path.
 /// Single source of truth: videos are loaded from paths stored here, not from URLs.
 class CachedVideoDatabase {
@@ -64,7 +78,7 @@ class CachedVideoDatabase {
     final Database db = await _getDb();
     final List<Map<String, Object?>> rows = await db.query(
       _table,
-      columns: [_columnLocalPath],
+      columns: [_columnLocalPath, _columnLastAccessedAt],
       where: '$_columnUrl = ?',
       whereArgs: [url],
     );
@@ -82,6 +96,13 @@ class CachedVideoDatabase {
       }
       return null;
     }
+    final int now = DateTime.now().millisecondsSinceEpoch;
+    await db.update(
+      _table,
+      <String, Object?>{_columnLastAccessedAt: now},
+      where: '$_columnUrl = ?',
+      whereArgs: [url],
+    );
     return path;
   }
 
@@ -100,5 +121,28 @@ class CachedVideoDatabase {
   static Future<void> deleteByUrl(String url) async {
     final Database db = await _getDb();
     await db.delete(_table, where: '$_columnUrl = ?', whereArgs: [url]);
+  }
+
+  static Future<List<CachedVideoEntry>> listEntries() async {
+    final Database db = await _getDb();
+    final List<Map<String, Object?>> rows = await db.query(
+      _table,
+      columns: [
+        _columnUrl,
+        _columnLocalPath,
+        _columnDownloadedAt,
+        _columnLastAccessedAt,
+      ],
+    );
+    return rows
+        .map((Map<String, Object?> row) {
+          return CachedVideoEntry(
+            url: row[_columnUrl]! as String,
+            localPath: row[_columnLocalPath]! as String,
+            downloadedAt: row[_columnDownloadedAt]! as int,
+            lastAccessedAt: row[_columnLastAccessedAt]! as int,
+          );
+        })
+        .toList(growable: false);
   }
 }

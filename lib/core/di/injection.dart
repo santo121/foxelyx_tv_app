@@ -50,6 +50,7 @@ Future<void> setupDi() async {
     () => AdsRepositoryImpl(
       getIt<PlaylistAdsDatasource>(),
       getIt<VideoCacheDatasource>(),
+      getIt<AuthRepository>(),
     ),
   );
   getIt.registerFactory<HomeCubit>(

@@ -9,9 +9,11 @@ class VehicleSession {
     this.registeredAtMs,
     this.accessToken,
     this.secret,
+    this.screenType,
+    this.placement,
   });
 
-  /// Device id issued by `/devices/pair` `data.deviceId`.
+  /// Device id issued by `/api/devices/pair` `data.deviceId`.
   /// Used for `/auth/device` re-auth with the stored secret.
   final String deviceId;
 
@@ -30,6 +32,12 @@ class VehicleSession {
   final String? accessToken;
   final String? secret;
 
+  /// From pair `data.screenType` (e.g. `PORTRAIT`, `LANDSCAPE`). `PORTRAIT` rotates poster UI 90° on TV; device stays landscape.
+  final String? screenType;
+
+  /// From pair `data.placement` (e.g. `RESTAURANT`).
+  final String? placement;
+
   Map<String, dynamic> toJson() => <String, dynamic>{
     'deviceId': deviceId,
     'pairingCode': pairingCode,
@@ -38,6 +46,8 @@ class VehicleSession {
     'registeredAtMs': registeredAtMs,
     'accessToken': accessToken,
     'secret': secret,
+    'screenType': screenType,
+    'placement': placement,
   };
 
   static VehicleSession fromJson(Map<String, dynamic> json) {
@@ -54,6 +64,8 @@ class VehicleSession {
       accessToken:
           json['accessToken'] as String? ?? json['access_token'] as String?,
       secret: json['secret'] as String?,
+      screenType: json['screenType'] as String?,
+      placement: json['placement'] as String?,
     );
   }
 
@@ -65,6 +77,8 @@ class VehicleSession {
     int? registeredAtMs,
     String? accessToken,
     String? secret,
+    String? screenType,
+    String? placement,
   }) {
     return VehicleSession(
       deviceId: deviceId ?? this.deviceId,
@@ -74,6 +88,8 @@ class VehicleSession {
       registeredAtMs: registeredAtMs ?? this.registeredAtMs,
       accessToken: accessToken ?? this.accessToken,
       secret: secret ?? this.secret,
+      screenType: screenType ?? this.screenType,
+      placement: placement ?? this.placement,
     );
   }
 }

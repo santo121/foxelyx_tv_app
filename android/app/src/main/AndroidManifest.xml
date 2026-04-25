@@ -11,6 +11,7 @@
         android:label="foxelyx"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:largeHeap="true"
         android:enableOnBackInvokedCallback="true">
         <activity
             android:name=".MainActivity"
@@ -21,7 +22,7 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize|stateVisible"
-            android:screenOrientation="portrait">
+            android:screenOrientation="landscape">
             <!-- Specifies an Android theme to apply to this Activity as soon as
                  the Android process has started. This theme is visible to the user
                  while the Flutter UI initializes. After that, this theme continues
@@ -51,6 +52,10 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- Mi TV / some Android TV devices crash in debug with Impeller ("Invalid resource ID 0x00000000"). -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

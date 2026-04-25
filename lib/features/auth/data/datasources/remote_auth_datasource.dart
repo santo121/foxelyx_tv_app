@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../../../../core/config/api_config.dart';
 import '../../../../core/debug/api_request_log.dart';
+import '../../../../core/domain/entities/device_pair_data.dart';
 import '../../../../core/domain/entities/vehicle_session.dart';
 
 /// Foxelyx API base (pair + device auth).
@@ -17,14 +18,14 @@ class RemoteAuthDatasource {
       throw AuthException('Please enter the pairing code.');
     }
 
-    final Map<String, String> paired = await _pairDevice(code);
-    final String apiDeviceId = paired['deviceId']!;
-    final String secret = paired['secret']!;
+    final DevicePairData paired = await _pairDevice(code);
 
     return _authenticateDevice(
-      apiDeviceId: apiDeviceId,
-      secret: secret,
+      apiDeviceId: paired.deviceId,
+      secret: paired.secret,
       pairingCode: code,
+      screenType: paired.screenType,
+      placement: paired.placement,
     );
   }
 
@@ -32,11 +33,15 @@ class RemoteAuthDatasource {
     required String apiDeviceId,
     required String secret,
     required String pairingCode,
+    String? screenType,
+    String? placement,
   }) {
     return _authenticateDevice(
       apiDeviceId: apiDeviceId,
       secret: secret,
       pairingCode: pairingCode,
+      screenType: screenType,
+      placement: placement,
     );
   }
 
@@ -44,6 +49,8 @@ class RemoteAuthDatasource {
     required String apiDeviceId,
     required String secret,
     required String pairingCode,
+    String? screenType,
+    String? placement,
   }) async {
     final Uri authUrl = Uri.parse('$_baseUrl/api/auth/device');
     final String authBodyJson = jsonEncode(<String, String>{
@@ -109,10 +116,12 @@ class RemoteAuthDatasource {
       registeredAtMs: DateTime.now().millisecondsSinceEpoch,
       accessToken: accessToken,
       secret: secret,
+      screenType: screenType,
+      placement: placement,
     );
   }
 
-  Future<Map<String, String>> _pairDevice(String pairingCode) async {
+  Future<DevicePairData> _pairDevice(String pairingCode) async {
     final Uri url = Uri.parse('$_baseUrl/api/devices/pair');
     final String pairJson = jsonEncode(<String, String>{
       'pairingCode': pairingCode,
@@ -139,16 +148,14 @@ class RemoteAuthDatasource {
     }
 
     final Map<String, dynamic>? data = body['data'] as Map<String, dynamic>?;
-    final String? deviceId = data?['deviceId'] as String?;
-    final String? secret = data?['secret'] as String?;
-    if (deviceId == null ||
-        deviceId.isEmpty ||
-        secret == null ||
-        secret.isEmpty) {
+    if (data == null) {
       throw AuthException('Invalid pairing code');
     }
-
-    return <String, String>{'deviceId': deviceId, 'secret': secret};
+    try {
+      return DevicePairData.fromResponseData(data);
+    } on FormatException {
+      throw AuthException('Invalid pairing code');
+    }
   }
 
   Map<String, dynamic> _decodeJsonMap(String raw) {

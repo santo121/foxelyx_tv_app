@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/di/injection.dart';
+import '../../../../core/utils/image_display_decode_size.dart';
 import '../../../../core/domain/entities/vehicle_session.dart';
 import '../../../../core/domain/repositories/auth_repository.dart';
 import '../../../home/domain/campaign_playlist_socket.dart';
@@ -166,12 +167,9 @@ class _SplashPageState extends State<SplashPage> {
     const Color splashBackground = Color(0xFF1A1B3D);
     final Size size = MediaQuery.sizeOf(context);
     final double dpr = MediaQuery.devicePixelRatioOf(context);
-    final int cacheWidth = (size.width * 0.5 * dpr)
-        .clamp(480.0, 1280.0)
-        .toInt();
-    final int cacheHeight = (size.width * 0.5 * dpr)
-        .clamp(480.0, 1280.0)
-        .toInt();
+    final double logoLogical = size.width * 0.5;
+    final int cacheWidth = decodePixelsAlong(logoLogical, dpr);
+    final int cacheHeight = decodePixelsAlong(logoLogical, dpr);
     return Scaffold(
       backgroundColor: splashBackground,
       body: RepaintBoundary(
@@ -183,7 +181,7 @@ class _SplashPageState extends State<SplashPage> {
               child: Image.asset(
                 'assets/logo/foxelyx_logo.png',
                 fit: BoxFit.contain,
-                filterQuality: FilterQuality.medium,
+                filterQuality: FilterQuality.high,
                 cacheWidth: cacheWidth,
                 cacheHeight: cacheHeight,
                 errorBuilder: (context, error, stackTrace) =>

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/utils/image_display_decode_size.dart';
 import '../cubit/auth_cubit.dart';
 import '../cubit/auth_state.dart';
 
@@ -104,13 +105,14 @@ class _LoginPageState extends State<LoginPage> {
                           MediaQuery.devicePixelRatioOf(context);
                       final double logoWidth = screenSize.width * 0.22;
                       final double logoHeight = screenSize.height * 0.28;
-                      final int logoCacheWidth = (logoWidth * devicePixelRatio)
-                          .clamp(240.0, 1200.0)
-                          .toInt();
-                      final int logoCacheHeight =
-                          (logoHeight * devicePixelRatio)
-                              .clamp(240.0, 1200.0)
-                              .toInt();
+                      final int logoCacheWidth = decodePixelsAlong(
+                        logoWidth,
+                        devicePixelRatio,
+                      );
+                      final int logoCacheHeight = decodePixelsAlong(
+                        logoHeight,
+                        devicePixelRatio,
+                      );
 
                       final Widget formColumn = Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -283,7 +285,7 @@ class _LoginPageState extends State<LoginPage> {
                             child: Image.asset(
                               'assets/logo/foxelyx_logo.png',
                               fit: BoxFit.contain,
-                              filterQuality: FilterQuality.medium,
+                              filterQuality: FilterQuality.high,
                               cacheWidth: logoCacheWidth,
                               cacheHeight: logoCacheHeight,
                             ),

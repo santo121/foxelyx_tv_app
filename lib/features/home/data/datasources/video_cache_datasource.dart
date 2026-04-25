@@ -4,8 +4,8 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
+import '../../../../core/utils/storage_helper.dart';
 import 'cached_video_database.dart';
 
 /// Resolves remote URLs to cached local file paths when available.
@@ -23,12 +23,17 @@ class VideoCacheDatasource {
   /// Returns local file path for the video. Cache-first: if already cached, returns
   /// that path and never hits the network. Non-http [url] (e.g. asset paths) are returned unchanged.
   Future<String> getLocalPath(String url) async {
+    if (_isYoutubeUrl(url)) return url;
     if (!url.startsWith('http')) return url;
 
     // Use cached local file if we have it (no network call).
     final String? storedPath = await CachedVideoDatabase.getLocalPathByUrl(url);
     if (storedPath != null) {
-      return storedPath;
+      if (await File(storedPath).exists()) {
+        return storedPath;
+      } else {
+        await CachedVideoDatabase.deleteByUrl(url);
+      }
     }
 
     // Cache miss: return network URL; no background downloads.
@@ -38,6 +43,7 @@ class VideoCacheDatasource {
   /// Downloads [url] to local storage when not already cached.
   /// Uses per-URL in-flight deduping to avoid duplicate downloads.
   Future<void> cacheVideoIfNeeded(String url) async {
+    if (_isYoutubeUrl(url)) return;
     if (!url.startsWith('http')) return;
 
     final Future<void> pending =
@@ -55,7 +61,7 @@ class VideoCacheDatasource {
   /// Removes cached files/rows that are not present in [activeUrls].
   Future<void> purgeMissingFrom(Set<String> activeUrls) async {
     final Set<String> normalizedActive = activeUrls
-        .where((String url) => url.startsWith('http'))
+        .where((String url) => url.startsWith('http') && !_isYoutubeUrl(url))
         .toSet();
     final List<CachedVideoEntry> entries =
         await CachedVideoDatabase.listEntries();
@@ -66,6 +72,7 @@ class VideoCacheDatasource {
   }
 
   Future<void> _cacheVideoInternal(String url) async {
+    if (_isYoutubeUrl(url)) return;
     final String? existing = await CachedVideoDatabase.getLocalPathByUrl(url);
     if (existing != null) return;
 
@@ -80,7 +87,7 @@ class VideoCacheDatasource {
       );
     }
 
-    final Directory docs = await getApplicationDocumentsDirectory();
+    final Directory docs = await StorageHelper.getBestCacheDirectory();
     final Directory cacheDir = Directory(p.join(docs.path, 'cached_videos'));
     if (!await cacheDir.exists()) {
       await cacheDir.create(recursive: true);
@@ -149,8 +156,9 @@ class VideoCacheDatasource {
       totalBytes += size;
       sized.add(_SizedCachedVideoEntry(entry: entry, bytes: size));
     }
-    if (sized.length <= _maxCachedFiles && totalBytes <= _maxCachedBytes)
+    if (sized.length <= _maxCachedFiles && totalBytes <= _maxCachedBytes) {
       return;
+    }
 
     sized.sort((a, b) {
       final int accessedOrder = a.entry.lastAccessedAt.compareTo(
@@ -179,6 +187,11 @@ class VideoCacheDatasource {
       } catch (_) {}
     }
     await CachedVideoDatabase.deleteByUrl(entry.url);
+  }
+
+  bool _isYoutubeUrl(String url) {
+    final String lower = url.toLowerCase();
+    return lower.contains('youtube.com') || lower.contains('youtu.be');
   }
 }
 

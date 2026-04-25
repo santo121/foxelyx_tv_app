@@ -52,6 +52,8 @@ class AuthRepositoryImpl implements AuthRepository {
         apiDeviceId: apiDeviceId,
         secret: secret,
         pairingCode: existing.pairingCode,
+        screenType: existing.screenType,
+        placement: existing.placement,
       );
       await _local.saveSession(refreshed);
       return true;

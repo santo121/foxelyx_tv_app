@@ -12,9 +12,7 @@ import '../../domain/exceptions/playlist_auth_required_exception.dart';
 const String _playlistBaseHost = ApiConfig.host;
 
 AdContent _parsePlaylistResponseBody(String responseBody) {
-  final Map<String, dynamic> json =
-      jsonDecode(responseBody) as Map<String, dynamic>;
-  return PlaylistAdsDatasource.parseResponseStatic(json);
+  return PlaylistAdsDatasource.parseResponseBodyStatic(responseBody);
 }
 
 class PlaylistAdsDatasource {
@@ -67,6 +65,17 @@ class PlaylistAdsDatasource {
     return parsed;
   }
 
+  static AdContent parseResponseBodyStatic(String responseBody) {
+    final dynamic decoded = jsonDecode(responseBody);
+    if (decoded is List<dynamic>) {
+      return _parseItems(decoded);
+    }
+    if (decoded is Map<String, dynamic>) {
+      return _parseResponse(decoded);
+    }
+    throw const FormatException('Unsupported playlist JSON shape.');
+  }
+
   static AdContent parseResponseStatic(Map<String, dynamic> json) {
     return _parseResponse(json);
   }
@@ -106,10 +115,20 @@ class PlaylistAdsDatasource {
       ]);
     }
 
-    if (videos.isEmpty && posters.isEmpty) {
+    final List<String> finalVideos = <String>[];
+    final List<String> finalYouTubes = <String>[];
+    for (final v in videos) {
+      if (_looksLikeYoutube(v)) {
+        finalYouTubes.add(v);
+      } else {
+        finalVideos.add(v);
+      }
+    }
+
+    if (finalVideos.isEmpty && posters.isEmpty && finalYouTubes.isEmpty) {
       throw const FormatException('Unsupported playlist JSON shape.');
     }
-    return AdContent(videoUrls: videos, posterUrls: posters);
+    return AdContent(videoUrls: finalVideos, posterUrls: posters, youtubeUrls: finalYouTubes);
   }
 
   static AdContent _parseItems(List<dynamic> items) {
@@ -165,15 +184,30 @@ class PlaylistAdsDatasource {
       }
       if (p != null && p.isNotEmpty) posters.add(p);
     }
-    return AdContent(videoUrls: videos, posterUrls: posters);
+    final List<String> finalVideos = <String>[];
+    final List<String> finalYouTubes = <String>[];
+    for (final v in videos) {
+      if (_looksLikeYoutube(v)) {
+        finalYouTubes.add(v);
+      } else {
+        finalVideos.add(v);
+      }
+    }
+    return AdContent(videoUrls: finalVideos, posterUrls: posters, youtubeUrls: finalYouTubes);
   }
 
   static bool _looksLikeVideo(String url) {
+    if (_looksLikeYoutube(url)) return true;
     final String lower = url.toLowerCase();
     return lower.contains('.mp4') ||
         lower.contains('.webm') ||
         lower.contains('.mkv') ||
         lower.contains('/video');
+  }
+
+  static bool _looksLikeYoutube(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('youtube.com') || lower.contains('youtu.be');
   }
 
   static String? _firstString(Map<String, dynamic> m, List<String> keys) {

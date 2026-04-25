@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
+import '../../../../core/utils/ext_cache_manager.dart';
+
 /// Renders a poster from either an asset path (e.g. assets/images/...) or a network URL.
-/// Uses cacheWidth/cacheHeight for low-RAM TV devices.
+/// Decode size should be device pixels for the layout box (`decodePixelsAlong`) for full clarity.
 class AdPosterImage extends StatelessWidget {
   const AdPosterImage({
     super.key,
@@ -29,6 +31,7 @@ class AdPosterImage extends StatelessWidget {
   Widget build(BuildContext context) {
     if (isNetworkUrl(url)) {
       return CachedNetworkImage(
+        cacheManager: ExtCacheManager.instance,
         imageUrl: url,
         fit: fit,
         width: width,
@@ -37,7 +40,7 @@ class AdPosterImage extends StatelessWidget {
         memCacheHeight: cacheHeight,
         fadeInDuration: Duration.zero,
         fadeOutDuration: Duration.zero,
-        filterQuality: FilterQuality.low,
+        filterQuality: FilterQuality.high,
         placeholder: (BuildContext context, String _) {
           return RepaintBoundary(
             child: SizedBox(
@@ -73,6 +76,7 @@ class AdPosterImage extends StatelessWidget {
       height: height,
       cacheWidth: cacheWidth,
       cacheHeight: cacheHeight,
+      filterQuality: FilterQuality.high,
     );
   }
 }

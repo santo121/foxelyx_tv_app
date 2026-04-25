@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'ad_poster_image.dart';
 
 /// TV-focused carousel: Focus on each item, no heavy shaders (border only when focused).
-/// cacheWidth/cacheHeight from display size to save heap on ~1 GB RAM.
+/// Pass device-pixel decode sizes (e.g. `decodePixelsAlong` from `image_display_decode_size`) for sharp assets.
 class PosterCarousel extends StatefulWidget {
   const PosterCarousel({
     super.key,

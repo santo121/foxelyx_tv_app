@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:video_player/video_player.dart';
+import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import '../../../../core/domain/repositories/auth_repository.dart';
 import '../../domain/campaign_playlist_socket.dart';
@@ -13,6 +14,36 @@ import '../../domain/exceptions/playlist_auth_required_exception.dart';
 import '../../domain/entities/preloaded_ads_holder.dart';
 import '../../domain/repositories/ads_repository.dart';
 import 'home_state.dart';
+
+/// Top-level worker to extract YouTube URLs off the main isolate, preventing jank/freezes on the news ticker.
+Future<String?> _extractYoutubeLink(String url) async {
+  final yt = YoutubeExplode();
+  try {
+    final videoId = VideoId(url);
+    final manifest = await yt.videos.streamsClient.getManifest(videoId);
+    
+    // Try to get the highest quality 720p/1080p MUXED stream (with Audio).
+    // YouTube's max muxed limit is typically 720p.
+    final muxedStreams = manifest.muxed.where((s) => s.container == StreamContainer.mp4).toList();
+    if (muxedStreams.isNotEmpty) {
+      muxedStreams.sort((a, b) => b.videoResolution.height.compareTo(a.videoResolution.height));
+      return muxedStreams.first.url.toString();
+    } else if (manifest.videoOnly.isNotEmpty) {
+      // Fallback to highest quality video-only (often 1080p or 4K but silent)
+      final videoStreams = manifest.videoOnly.where((s) => s.container == StreamContainer.mp4).toList();
+      if (videoStreams.isNotEmpty) {
+        videoStreams.sort((a, b) => b.videoResolution.height.compareTo(a.videoResolution.height));
+        return videoStreams.first.url.toString();
+      }
+      return manifest.videoOnly.withHighestBitrate().url.toString();
+    }
+  } catch (e) {
+    if (kDebugMode) print('Youtube isolate error: $e');
+  } finally {
+    yt.close();
+  }
+  return null;
+}
 
 /// Single video controller at a time; init next when advancing to next video slot.
 /// Posters and videos are shown in order: each poster 20s, then each video for its duration.
@@ -169,11 +200,19 @@ class HomeCubit extends Cubit<HomeState> {
     }
   }
 
+  int _youtubeRotationIndex = 0;
+
+  List<String> _getActiveMediaUrls(AdContent content) {
+    if (content.youtubeUrls.isEmpty) return content.videoUrls;
+    final String activeYoutube = content.youtubeUrls[_youtubeRotationIndex % content.youtubeUrls.length];
+    return [...content.videoUrls, activeYoutube];
+  }
+
   void _startRotation(AdContent content) {
     if (isClosed) return;
     _clearPreparedVideo();
     final int posterCount = content.posterUrls.length;
-    if (content.videoUrls.isEmpty) {
+    if (_getActiveMediaUrls(content).isEmpty) {
       if (posterCount > 0) {
         emit(HomeLoaded(content: content, currentDisplayIndex: 0));
         unawaited(_prepareNextDisplay(content, 0));
@@ -192,7 +231,12 @@ class HomeCubit extends Cubit<HomeState> {
 
   VideoPlayerController _controllerForUrl(String url) {
     if (url.startsWith('http')) {
-      return VideoPlayerController.networkUrl(Uri.parse(url));
+      return VideoPlayerController.networkUrl(
+        Uri.parse(url),
+        httpHeaders: const {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        },
+      );
     }
     if (url.startsWith('assets/')) {
       return VideoPlayerController.asset(url);
@@ -201,7 +245,7 @@ class HomeCubit extends Cubit<HomeState> {
   }
 
   Future<void> _playVideoAt(AdContent content, int videoIndex) async {
-    if (isClosed || videoIndex >= content.videoUrls.length) return;
+    if (isClosed || videoIndex >= _getActiveMediaUrls(content).length) return;
     final int posterCount = content.posterUrls.length;
     final int displayIndex = posterCount + videoIndex;
 
@@ -218,9 +262,30 @@ class HomeCubit extends Cubit<HomeState> {
       } catch (_) {
         warmedContent = content;
       }
-      if (isClosed || videoIndex >= warmedContent.videoUrls.length) return;
-      final String url = warmedContent.videoUrls[videoIndex];
-      controller = _controllerForUrl(url);
+      if (isClosed || videoIndex >= _getActiveMediaUrls(warmedContent).length) return;
+      final String url = _getActiveMediaUrls(warmedContent)[videoIndex];
+      
+      String actualUrl = url;
+      final bool isYoutube = url.toLowerCase().contains('youtube.com') || url.toLowerCase().contains('youtu.be');
+      if (isYoutube) {
+        if (!isClosed) {
+          emit(HomeLoaded(
+            content: warmedContent,
+            videoController: null,
+            currentDisplayIndex: displayIndex,
+          ));
+        }
+        try {
+          final String? extracted = await compute(_extractYoutubeLink, url);
+          if (extracted != null) {
+            actualUrl = extracted;
+          }
+        } catch (e) {
+          if (kDebugMode) print('Youtube fetch error: $e');
+        }
+      }
+      
+      controller = _controllerForUrl(actualUrl);
       try {
         final bool acquired = await _acquireVideoInitLock(waitIfBusy: true);
         if (!acquired) {
@@ -287,8 +352,9 @@ class HomeCubit extends Cubit<HomeState> {
       content: warmedContent,
       displayIndex: displayIndex,
     );
-    if (videoIndex < warmedContent.videoUrls.length) {
-      _videoRetryByUrl.remove(warmedContent.videoUrls[videoIndex]);
+    // remove from retry map
+    if (videoIndex < _getActiveMediaUrls(warmedContent).length) {
+      _videoRetryByUrl.remove(_getActiveMediaUrls(warmedContent)[videoIndex]);
     }
     if (_enableNextVideoPreload) {
       unawaited(_prepareNextDisplay(warmedContent, displayIndex));
@@ -387,7 +453,7 @@ class HomeCubit extends Cubit<HomeState> {
         }
         final int posterCount = content.posterUrls.length;
         final int videoIndex = displayIndex - posterCount;
-        if (videoIndex < 0 || videoIndex >= content.videoUrls.length) return;
+        if (videoIndex < 0 || videoIndex >= _getActiveMediaUrls(content).length) return;
         if (kDebugMode) {
           // ignore: avoid_print
           print(
@@ -403,10 +469,10 @@ class HomeCubit extends Cubit<HomeState> {
   /// When a video fails to play, try the next video or return to posters.
   void _skipToNextVideoOrPosters(AdContent content, int failedVideoIndex) {
     if (isClosed) return;
-    if (failedVideoIndex >= 0 && failedVideoIndex < content.videoUrls.length) {
-      _videoRetryByUrl.remove(content.videoUrls[failedVideoIndex]);
+    if (failedVideoIndex >= 0 && failedVideoIndex < _getActiveMediaUrls(content).length) {
+      _videoRetryByUrl.remove(_getActiveMediaUrls(content)[failedVideoIndex]);
     }
-    final int videoCount = content.videoUrls.length;
+    final int videoCount = _getActiveMediaUrls(content).length;
     if (failedVideoIndex + 1 < videoCount) {
       _playVideoAt(content, failedVideoIndex + 1);
     } else {
@@ -424,7 +490,7 @@ class HomeCubit extends Cubit<HomeState> {
     if (isClosed) return;
 
     final int posterCount = content.posterUrls.length;
-    final int videoCount = content.videoUrls.length;
+    final int videoCount = _getActiveMediaUrls(content).length;
 
     if (currentIndex < posterCount) {
       _rotationTimer = Timer(_posterDuration, () {
@@ -493,8 +559,12 @@ class HomeCubit extends Cubit<HomeState> {
   ) async {
     if (isClosed) return;
     if (slot != _videoSlotGeneration) return;
-    if (videoIndex >= 0 && videoIndex < content.videoUrls.length) {
-      unawaited(_cachePlayedVideoBestEffort(content.videoUrls[videoIndex]));
+    if (videoIndex >= 0 && videoIndex < _getActiveMediaUrls(content).length) {
+      final url = _getActiveMediaUrls(content)[videoIndex];
+      final isYoutube = url.toLowerCase().contains('youtube.com') || url.toLowerCase().contains('youtu.be');
+      if (!isYoutube) {
+        unawaited(_cachePlayedVideoBestEffort(url));
+      }
     }
     _videoSlotGeneration++;
     _removeVideoHealthListener();
@@ -511,18 +581,21 @@ class HomeCubit extends Cubit<HomeState> {
     if (_applyPendingPlaylistIfAny()) return;
 
     final int posterCount = content.posterUrls.length;
-    final int videoCount = content.videoUrls.length;
+    final int videoCount = _getActiveMediaUrls(content).length;
 
     if (videoIndex + 1 < videoCount) {
-      if (videoIndex >= 0 && videoIndex < content.videoUrls.length) {
-        _videoRetryByUrl.remove(content.videoUrls[videoIndex]);
+      if (videoIndex >= 0 && videoIndex < _getActiveMediaUrls(content).length) {
+        _videoRetryByUrl.remove(_getActiveMediaUrls(content)[videoIndex]);
       }
       _playVideoAt(content, videoIndex + 1);
-    } else if (posterCount > 0) {
-      emit(HomeLoaded(content: content, currentDisplayIndex: 0));
-      _scheduleNext(content, null, 0);
     } else {
-      _playVideoAt(content, 0);
+      _youtubeRotationIndex++;
+      if (posterCount > 0) {
+        emit(HomeLoaded(content: content, currentDisplayIndex: 0));
+        _scheduleNext(content, null, 0);
+      } else {
+        _playVideoAt(content, 0);
+      }
     }
   }
 
@@ -546,7 +619,7 @@ class HomeCubit extends Cubit<HomeState> {
   }
 
   bool _isPlaylistEmpty(AdContent content) =>
-      content.posterUrls.isEmpty && content.videoUrls.isEmpty;
+      content.posterUrls.isEmpty && _getActiveMediaUrls(content).isEmpty;
 
   Future<void> _applyPlaylistImmediately(AdContent content) async {
     _pendingPlaylistContent = null;
@@ -594,7 +667,7 @@ class HomeCubit extends Cubit<HomeState> {
   }
 
   int _totalDisplayCount(AdContent content) =>
-      content.posterUrls.length + content.videoUrls.length;
+      content.posterUrls.length + _getActiveMediaUrls(content).length;
 
   int _nextDisplayIndex(AdContent content, int currentIndex) {
     final int total = _totalDisplayCount(content);
@@ -606,7 +679,7 @@ class HomeCubit extends Cubit<HomeState> {
     if (!_enableNextVideoPreload) return;
     if (isClosed || _isPreparingVideo || _isInitializingVideoController) return;
     final int total = _totalDisplayCount(content);
-    if (total <= 1 || content.videoUrls.isEmpty) return;
+    if (total <= 1 || _getActiveMediaUrls(content).isEmpty) return;
 
     final int nextIndex = _nextDisplayIndex(content, currentIndex);
     final int posterCount = content.posterUrls.length;
@@ -630,8 +703,11 @@ class HomeCubit extends Cubit<HomeState> {
       } catch (_) {
         warmedContent = content;
       }
-      if (isClosed || videoIndex >= warmedContent.videoUrls.length) return;
-      final String url = warmedContent.videoUrls[videoIndex];
+      if (isClosed || videoIndex >= _getActiveMediaUrls(warmedContent).length) return;
+      final String url = _getActiveMediaUrls(warmedContent)[videoIndex];
+      final bool isYoutube = url.toLowerCase().contains('youtube.com') || url.toLowerCase().contains('youtu.be');
+      if (isYoutube) return;
+      
       final VideoPlayerController prepared = _controllerForUrl(url);
       final bool acquired = await _acquireVideoInitLock();
       if (!acquired) {
@@ -730,10 +806,10 @@ class HomeCubit extends Cubit<HomeState> {
     AdContent content,
     int videoIndex,
   ) async {
-    if (isClosed || videoIndex < 0 || videoIndex >= content.videoUrls.length) {
+    if (isClosed || videoIndex < 0 || videoIndex >= _getActiveMediaUrls(content).length) {
       return;
     }
-    final String url = content.videoUrls[videoIndex];
+    final String url = _getActiveMediaUrls(content)[videoIndex];
     final int attempts = _videoRetryByUrl[url] ?? 0;
     if (attempts >= _maxVideoRetryCount) {
       _videoRetryByUrl.remove(url);

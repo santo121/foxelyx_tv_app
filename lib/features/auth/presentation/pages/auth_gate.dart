@@ -57,7 +57,7 @@ class _AuthGateState extends State<AuthGate> {
     });
     getIt<AuthRepository>()
         .getStoredSession()
-        .then((VehicleSession? session) {
+        .then((VehicleSession? session) async {
           if (!mounted) return;
           setState(() {
             _session = session;

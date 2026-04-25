@@ -115,6 +115,7 @@ class _AdPosterPdfState extends State<AdPosterPdf> {
         height: widget.height,
         cacheWidth: widget.cacheWidth,
         cacheHeight: widget.cacheHeight,
+        filterQuality: FilterQuality.high,
       ),
     );
   }

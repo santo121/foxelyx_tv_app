@@ -27,6 +27,10 @@ class LocalAdsDatasource {
         'assets/images/eagle-way-poster.jpg',
         // 'assets/images/bus2.jpg',
       ],
+      youtubeUrls: [
+        'https://www.youtube.com/watch?v=kzpS-A3QJqE&list=RDkzpS-A3QJqE&start_radio=1',
+        'https://www.youtube.com/watch?v=DXm6diugHCc&list=RDDXm6diugHCc&start_radio=1',
+      ],
     );
   }
 }

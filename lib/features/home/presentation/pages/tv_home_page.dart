@@ -5,6 +5,12 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:video_player/video_player.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
+import '../../../../core/di/injection.dart';
+import '../../../../core/domain/repositories/auth_repository.dart';
+import '../../../../core/utils/ext_cache_manager.dart';
+import '../../../../core/utils/image_display_decode_size.dart';
+import '../../../../widgets/news_ticker_overlay.dart';
+
 import '../cubit/home_cubit.dart';
 import '../cubit/home_state.dart';
 import '../widgets/ad_poster_image.dart';
@@ -21,11 +27,24 @@ class TvHomePage extends StatefulWidget {
 
 class _TvHomePageState extends State<TvHomePage> with WidgetsBindingObserver {
   String? _lastPrefetchedPosterUrl;
+  bool _rotatePostersPortrait = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_loadPosterLayoutFromSession());
+  }
+
+  /// When API [VehicleSession.screenType] is PORTRAIT, rotate poster assets 90° on this landscape TV.
+  Future<void> _loadPosterLayoutFromSession() async {
+    final session = await getIt<AuthRepository>().getStoredSession();
+    if (!mounted) return;
+    final bool portrait =
+        (session?.screenType ?? '').trim().toUpperCase() == 'PORTRAIT';
+    setState(() {
+      _rotatePostersPortrait = portrait;
+    });
   }
 
   @override
@@ -44,56 +63,86 @@ class _TvHomePageState extends State<TvHomePage> with WidgetsBindingObserver {
   }
 
   @override
+  void didHaveMemoryPressure() {
+    super.didHaveMemoryPressure();
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final Widget adsPane = BlocConsumer<HomeCubit, HomeState>(
+      listener: (BuildContext context, HomeState state) {
+        if (state is! HomeLoaded) return;
+        unawaited(_prefetchNextPosterIfNeeded(context, state));
+      },
+      builder: (BuildContext context, HomeState state) {
+        if (state is HomeLoading) {
+          return const _InitialAdsLoadingView();
+        }
+        if (state is HomeError) {
+          return _HomeErrorView(
+            message: state.message,
+            onRetry: () => context.read<HomeCubit>().loadAds(),
+          );
+        }
+        if (state is HomeContentReady) {
+          final bool isPlaylistEmpty =
+              state.content.posterUrls.isEmpty &&
+              state.content.videoUrls.isEmpty;
+          if (isPlaylistEmpty) {
+            return const _EmptyPlaylistView();
+          }
+          return _HomeLayout(
+            posterUrls: state.content.posterUrls,
+            videoController: null,
+            currentDisplayIndex: 0,
+            rotatePostersPortrait: _rotatePostersPortrait,
+          );
+        }
+        if (state is HomeLoaded) {
+          final bool isPlaylistEmpty =
+              state.content.posterUrls.isEmpty &&
+              state.content.videoUrls.isEmpty;
+          if (isPlaylistEmpty) {
+            return const _EmptyPlaylistView();
+          }
+          return _HomeLayout(
+            posterUrls: state.content.posterUrls,
+            videoController: state.videoController,
+            currentDisplayIndex: state.currentDisplayIndex,
+            rotatePostersPortrait: _rotatePostersPortrait,
+          );
+        }
+        return const SizedBox.shrink();
+      },
+    );
+
+    // LANDSCAPE screenType: horizontal ticker along the bottom of the screen.
+    // PORTRAIT screenType: left rail with vertical scrolling — matches poster orientation.
+    final Widget body = _rotatePostersPortrait
+        ? Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const NewsTickerOverlay(
+                layout: NewsTickerLayout.portraitPosterLeftRail,
+              ),
+              Expanded(child: adsPane),
+            ],
+          )
+        : Column(
+            children: <Widget>[
+              Expanded(child: adsPane),
+              const NewsTickerOverlay(),
+            ],
+          );
+
     return PopScope(
       canPop: false,
       child: Scaffold(
         backgroundColor: Colors.black,
         body: FocusScope(
-          child: BlocConsumer<HomeCubit, HomeState>(
-            listener: (BuildContext context, HomeState state) {
-              if (state is! HomeLoaded) return;
-              unawaited(_prefetchNextPosterIfNeeded(context, state));
-            },
-            builder: (BuildContext context, HomeState state) {
-              if (state is HomeLoading) {
-                return const _InitialAdsLoadingView();
-              }
-              if (state is HomeError) {
-                return _HomeErrorView(
-                  message: state.message,
-                  onRetry: () => context.read<HomeCubit>().loadAds(),
-                );
-              }
-              if (state is HomeContentReady) {
-                final bool isPlaylistEmpty =
-                    state.content.posterUrls.isEmpty &&
-                    state.content.videoUrls.isEmpty;
-                if (isPlaylistEmpty) {
-                  return const _EmptyPlaylistView();
-                }
-                return _HomeLayout(
-                  posterUrls: state.content.posterUrls,
-                  videoController: null,
-                  currentDisplayIndex: 0,
-                );
-              }
-              if (state is HomeLoaded) {
-                final bool isPlaylistEmpty =
-                    state.content.posterUrls.isEmpty &&
-                    state.content.videoUrls.isEmpty;
-                if (isPlaylistEmpty) {
-                  return const _EmptyPlaylistView();
-                }
-                return _HomeLayout(
-                  posterUrls: state.content.posterUrls,
-                  videoController: state.videoController,
-                  currentDisplayIndex: state.currentDisplayIndex,
-                );
-              }
-              return const SizedBox.shrink();
-            },
-          ),
+          child: body,
         ),
       ),
     );
@@ -116,11 +165,12 @@ class _TvHomePageState extends State<TvHomePage> with WidgetsBindingObserver {
     if (_lastPrefetchedPosterUrl == posterUrl) return;
 
     final Size size = MediaQuery.sizeOf(context);
-    final double dpr = MediaQuery.devicePixelRatioOf(context);
-    final int cacheWidth = (size.width * dpr).clamp(200.0, 1920.0).toInt();
-    final int cacheHeight = (size.height * dpr).clamp(200.0, 1080.0).toInt();
+    final double dpr = displayPixelRatioOf(context);
+    final int cacheWidth = decodePixelsAlong(size.width, dpr);
+    final int cacheHeight = decodePixelsAlong(size.height, dpr);
     final ImageProvider provider = CachedNetworkImageProvider(
       posterUrl,
+      cacheManager: ExtCacheManager.instance,
       maxWidth: cacheWidth,
       maxHeight: cacheHeight,
     );
@@ -255,11 +305,13 @@ class _HomeLayout extends StatelessWidget {
     required this.posterUrls,
     this.videoController,
     this.currentDisplayIndex = 0,
+    this.rotatePostersPortrait = false,
   });
 
   final List<String> posterUrls;
   final VideoPlayerController? videoController;
   final int currentDisplayIndex;
+  final bool rotatePostersPortrait;
 
   @override
   Widget build(BuildContext context) {
@@ -267,8 +319,11 @@ class _HomeLayout extends StatelessWidget {
       builder: (BuildContext context, BoxConstraints constraints) {
         final double width = constraints.maxWidth;
         final double height = constraints.maxHeight;
-        final int cacheHeight = height.clamp(200.0, 1080.0).toInt();
-        final int cacheWidth = width.clamp(200.0, 1920.0).toInt();
+        final double dpr = displayPixelRatioOf(context);
+        final int pxCanvasW = decodePixelsAlong(width, dpr);
+        final int pxCanvasH = decodePixelsAlong(height, dpr);
+        final int pxRotW = decodePixelsAlong(height, dpr);
+        final int pxRotH = decodePixelsAlong(width, dpr);
 
         final bool showingVideo =
             videoController != null && currentDisplayIndex >= posterUrls.length;
@@ -277,27 +332,65 @@ class _HomeLayout extends StatelessWidget {
 
         Widget content;
         if (showingVideo) {
-          content = VideoAdPlayer(controller: videoController!);
+          if (rotatePostersPortrait) {
+            content = RotatedBox(
+              quarterTurns: 1,
+              child: SizedBox(
+                width: height,
+                height: width,
+                child: VideoAdPlayer(controller: videoController!),
+              ),
+            );
+          } else {
+            content = VideoAdPlayer(controller: videoController!);
+          }
         } else if (showingPoster) {
           final String posterUrl = posterUrls[currentDisplayIndex];
           final bool isPdf = posterUrl.toLowerCase().endsWith('.pdf');
-          content = isPdf
-              ? AdPosterPdf(
-                  assetPath: posterUrl,
-                  width: width,
-                  height: height,
-                  cacheWidth: cacheWidth,
-                  cacheHeight: cacheHeight,
-                  fit: BoxFit.cover,
-                )
-              : AdPosterImage(
-                  url: posterUrl,
-                  width: width,
-                  height: height,
-                  cacheWidth: cacheWidth,
-                  cacheHeight: cacheHeight,
-                  fit: BoxFit.cover,
-                );
+          if (rotatePostersPortrait) {
+            content = RotatedBox(
+              quarterTurns: 1,
+              child: SizedBox(
+                width: height,
+                height: width,
+                child: isPdf
+                    ? AdPosterPdf(
+                        assetPath: posterUrl,
+                        width: height,
+                        height: width,
+                        cacheWidth: pxRotW,
+                        cacheHeight: pxRotH,
+                        fit: BoxFit.cover,
+                      )
+                    : AdPosterImage(
+                        url: posterUrl,
+                        width: height,
+                        height: width,
+                        cacheWidth: pxRotW,
+                        cacheHeight: pxRotH,
+                        fit: BoxFit.cover,
+                      ),
+              ),
+            );
+          } else {
+            content = isPdf
+                ? AdPosterPdf(
+                    assetPath: posterUrl,
+                    width: width,
+                    height: height,
+                    cacheWidth: pxCanvasW,
+                    cacheHeight: pxCanvasH,
+                    fit: BoxFit.cover,
+                  )
+                : AdPosterImage(
+                    url: posterUrl,
+                    width: width,
+                    height: height,
+                    cacheWidth: pxCanvasW,
+                    cacheHeight: pxCanvasH,
+                    fit: BoxFit.cover,
+                  );
+          }
         } else {
           content = const _VideoPlaceholder();
         }
@@ -347,8 +440,8 @@ class _EmptyPlaylistView extends StatelessWidget {
         final double dpr = MediaQuery.devicePixelRatioOf(context);
         final double logoWidth = height * 0.48;
         final double logoHeight = height * 0.48;
-        final int cacheWidth = (logoWidth * dpr).clamp(120.0, 1280.0).toInt();
-        final int cacheHeight = (logoHeight * dpr).clamp(120.0, 720.0).toInt();
+        final int cacheWidth = decodePixelsAlong(logoWidth, dpr);
+        final int cacheHeight = decodePixelsAlong(logoHeight, dpr);
 
         return Container(
           color: Colors.black,
@@ -364,7 +457,7 @@ class _EmptyPlaylistView extends StatelessWidget {
                   cacheWidth: cacheWidth,
                   cacheHeight: cacheHeight,
                   fit: BoxFit.contain,
-                  filterQuality: FilterQuality.low,
+                  filterQuality: FilterQuality.high,
                 ),
                 const SizedBox(height: 18),
                 const Text(

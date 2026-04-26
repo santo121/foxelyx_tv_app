@@ -73,6 +73,20 @@ class _AuthGateState extends State<AuthGate> {
         });
   }
 
+  Future<void> _showLoginFromError() async {
+    try {
+      await getIt<AuthRepository>().clearSession();
+    } catch (_) {
+      // Best effort: even if clear fails, move user to login screen.
+    }
+    if (!mounted) return;
+    setState(() {
+      _session = null;
+      _loading = false;
+      _error = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -121,7 +135,7 @@ class _AuthGateState extends State<AuthGate> {
           cubit.loadAds();
           return cubit;
         },
-        child: const TvHomePage(),
+        child: TvHomePage(onLoginRequested: _showLoginFromError),
       );
     }
     return LoginPage(onLoginSuccess: _onLoginSuccess);

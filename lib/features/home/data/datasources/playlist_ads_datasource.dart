@@ -11,8 +11,13 @@ import '../../domain/exceptions/playlist_auth_required_exception.dart';
 /// Fetches the ad playlist: `GET /api/devices/:deviceId/playlist`.
 const String _playlistBaseHost = ApiConfig.host;
 
-AdContent _parsePlaylistResponseBody(String responseBody) {
-  return PlaylistAdsDatasource.parseResponseBodyStatic(responseBody);
+AdContent _parsePlaylistResponseBody(Map<String, String?> payload) {
+  final String responseBody = payload['responseBody'] ?? '';
+  final String? preferredOrientation = payload['preferredOrientation'];
+  return PlaylistAdsDatasource.parseResponseBodyStatic(
+    responseBody,
+    preferredOrientation: preferredOrientation,
+  );
 }
 
 class PlaylistAdsDatasource {
@@ -26,6 +31,9 @@ class PlaylistAdsDatasource {
     final String? token = await _auth.getAccessToken();
     final session = await _auth.getStoredSession();
     final String? deviceId = session?.vehicleId;
+    final String? preferredOrientation = _preferredOrientationForScreenType(
+      session?.screenType,
+    );
     if (token == null ||
         token.isEmpty ||
         deviceId == null ||
@@ -60,30 +68,45 @@ class PlaylistAdsDatasource {
 
     final AdContent parsed = await compute(
       _parsePlaylistResponseBody,
-      response.body,
+      <String, String?>{
+        'responseBody': response.body,
+        'preferredOrientation': preferredOrientation,
+      },
     );
     return parsed;
   }
 
-  static AdContent parseResponseBodyStatic(String responseBody) {
+  static AdContent parseResponseBodyStatic(
+    String responseBody, {
+    String? preferredOrientation,
+  }) {
     final dynamic decoded = jsonDecode(responseBody);
     if (decoded is List<dynamic>) {
-      return _parseItems(decoded);
+      return _parseItems(decoded, preferredOrientation: preferredOrientation);
     }
     if (decoded is Map<String, dynamic>) {
-      return _parseResponse(decoded);
+      return _parseResponse(
+        decoded,
+        preferredOrientation: preferredOrientation,
+      );
     }
     throw const FormatException('Unsupported playlist JSON shape.');
   }
 
-  static AdContent parseResponseStatic(Map<String, dynamic> json) {
-    return _parseResponse(json);
+  static AdContent parseResponseStatic(
+    Map<String, dynamic> json, {
+    String? preferredOrientation,
+  }) {
+    return _parseResponse(json, preferredOrientation: preferredOrientation);
   }
 
-  static AdContent _parseResponse(Map<String, dynamic> json) {
+  static AdContent _parseResponse(
+    Map<String, dynamic> json, {
+    String? preferredOrientation,
+  }) {
     final dynamic data = json['data'] ?? json;
     if (data is List<dynamic>) {
-      return _parseItems(data);
+      return _parseItems(data, preferredOrientation: preferredOrientation);
     }
     if (data is! Map<String, dynamic>) {
       throw const FormatException('Unsupported playlist JSON shape.');
@@ -105,7 +128,7 @@ class PlaylistAdsDatasource {
     if (videos.isEmpty && posters.isEmpty) {
       final dynamic items = body['items'] ?? body['playlist'];
       if (items is List<dynamic>) {
-        return _parseItems(items);
+        return _parseItems(items, preferredOrientation: preferredOrientation);
       }
       videos = _urlsFromFlatListKeys(body, <String>[
         'urls',
@@ -131,17 +154,35 @@ class PlaylistAdsDatasource {
     return AdContent(videoUrls: finalVideos, posterUrls: posters, youtubeUrls: finalYouTubes);
   }
 
-  static AdContent _parseItems(List<dynamic> items) {
+  static AdContent _parseItems(
+    List<dynamic> items, {
+    String? preferredOrientation,
+  }) {
+    final AdContent oriented = _parseItemsWithOrientation(
+      items,
+      preferredOrientation: preferredOrientation,
+    );
+    if (!_isAdContentEmpty(oriented) || preferredOrientation == null) {
+      return oriented;
+    }
+
+    // Defensive fallback: if strict orientation produced nothing, use any
+    // available media instead of locking the screen in empty state.
+    return _parseItemsWithOrientation(items, preferredOrientation: null);
+  }
+
+  static AdContent _parseItemsWithOrientation(
+    List<dynamic> items, {
+    String? preferredOrientation,
+  }) {
     final List<String> videos = <String>[];
     final List<String> posters = <String>[];
     for (final dynamic item in items) {
       if (item is! Map) continue;
       final Map<String, dynamic> m = Map<String, dynamic>.from(item);
-      final String? orientation = m['orientation']?.toString().toLowerCase();
-      // TV app is landscape-only; when API sends orientation, keep only horizontal items.
-      if (orientation != null &&
-          orientation.isNotEmpty &&
-          orientation != 'horizontal') {
+      final String? itemOrientation =
+          m['orientation']?.toString().trim().toLowerCase();
+      if (!_matchesPreferredOrientation(itemOrientation, preferredOrientation)) {
         continue;
       }
       final String? type = (m['type'] ?? m['kind'] ?? m['mediaType'])
@@ -196,6 +237,11 @@ class PlaylistAdsDatasource {
     return AdContent(videoUrls: finalVideos, posterUrls: posters, youtubeUrls: finalYouTubes);
   }
 
+  static bool _isAdContentEmpty(AdContent content) =>
+      content.videoUrls.isEmpty &&
+      content.posterUrls.isEmpty &&
+      content.youtubeUrls.isEmpty;
+
   static bool _looksLikeVideo(String url) {
     if (_looksLikeYoutube(url)) return true;
     final String lower = url.toLowerCase();
@@ -208,6 +254,30 @@ class PlaylistAdsDatasource {
   static bool _looksLikeYoutube(String url) {
     final lower = url.toLowerCase();
     return lower.contains('youtube.com') || lower.contains('youtu.be');
+  }
+
+  static String? _preferredOrientationForScreenType(String? screenType) {
+    final String normalized = (screenType ?? '').trim().toUpperCase();
+    if (normalized == 'PORTRAIT') return 'portrait';
+    if (normalized == 'LANDSCAPE') return 'landscape';
+    return null;
+  }
+
+  static bool _matchesPreferredOrientation(
+    String? itemOrientation,
+    String? preferredOrientation,
+  ) {
+    final String preferred = (preferredOrientation ?? '').trim().toLowerCase();
+    if (preferred.isEmpty) return true;
+    final String item = (itemOrientation ?? '').trim().toLowerCase();
+    if (item.isEmpty) return true;
+    if (preferred == 'portrait') {
+      return item == 'portrait' || item == 'vertical';
+    }
+    if (preferred == 'landscape') {
+      return item == 'landscape' || item == 'horizontal';
+    }
+    return true;
   }
 
   static String? _firstString(Map<String, dynamic> m, List<String> keys) {

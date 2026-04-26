@@ -155,7 +155,7 @@ class _SplashPageState extends State<SplashPage> {
             cubit.loadAds();
             return cubit;
           },
-          child: const TvHomePage(),
+          child: TvHomePage(onLoginRequested: _goToAuthGate),
         ),
       ),
     );

@@ -19,7 +19,9 @@ import '../widgets/video_ad_player.dart';
 
 /// Dumb UI: no API calls, no business logic. Only cubit.loadAds() and BlocBuilder.
 class TvHomePage extends StatefulWidget {
-  const TvHomePage({super.key});
+  const TvHomePage({super.key, this.onLoginRequested});
+
+  final VoidCallback? onLoginRequested;
 
   @override
   State<TvHomePage> createState() => _TvHomePageState();
@@ -84,12 +86,14 @@ class _TvHomePageState extends State<TvHomePage> with WidgetsBindingObserver {
           return _HomeErrorView(
             message: state.message,
             onRetry: () => context.read<HomeCubit>().loadAds(),
+            onLogin: widget.onLoginRequested,
           );
         }
         if (state is HomeContentReady) {
           final bool isPlaylistEmpty =
               state.content.posterUrls.isEmpty &&
-              state.content.videoUrls.isEmpty;
+              state.content.videoUrls.isEmpty &&
+              state.content.youtubeUrls.isEmpty;
           if (isPlaylistEmpty) {
             return const _EmptyPlaylistView();
           }
@@ -103,7 +107,8 @@ class _TvHomePageState extends State<TvHomePage> with WidgetsBindingObserver {
         if (state is HomeLoaded) {
           final bool isPlaylistEmpty =
               state.content.posterUrls.isEmpty &&
-              state.content.videoUrls.isEmpty;
+              state.content.videoUrls.isEmpty &&
+              state.content.youtubeUrls.isEmpty;
           if (isPlaylistEmpty) {
             return const _EmptyPlaylistView();
           }
@@ -184,10 +189,15 @@ class _TvHomePageState extends State<TvHomePage> with WidgetsBindingObserver {
 }
 
 class _HomeErrorView extends StatelessWidget {
-  const _HomeErrorView({required this.message, required this.onRetry});
+  const _HomeErrorView({
+    required this.message,
+    required this.onRetry,
+    this.onLogin,
+  });
 
   final String message;
   final VoidCallback onRetry;
+  final VoidCallback? onLogin;
 
   @override
   Widget build(BuildContext context) {
@@ -234,67 +244,104 @@ class _HomeErrorView extends StatelessWidget {
                   style: TextStyle(color: Colors.white54, fontSize: 18),
                 ),
                 const SizedBox(height: 30),
-                FocusableActionDetector(
-                  autofocus: true,
-                  actions: <Type, Action<Intent>>{
-                    ActivateIntent: CallbackAction<ActivateIntent>(
-                      onInvoke: (ActivateIntent intent) {
-                        onRetry();
-                        return null;
-                      },
-                    ),
-                  },
-                  child: Builder(
-                    builder: (BuildContext context) {
-                      final bool hasFocus = Focus.of(context).hasFocus;
-                      return AnimatedScale(
-                        duration: const Duration(milliseconds: 120),
-                        scale: hasFocus ? 1.02 : 1,
-                        child: ElevatedButton.icon(
-                          onPressed: onRetry,
-                          icon: const Icon(Icons.refresh_rounded, size: 22),
-                          label: const Padding(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            child: Text(
-                              'Retry',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            elevation: 0,
-                            foregroundColor: const Color(0xFF06122A),
-                            backgroundColor: hasFocus
-                                ? const Color(0xFFE4EEFF)
-                                : const Color(0xFFD5E3FF),
-                            side: BorderSide(
-                              color: hasFocus
-                                  ? const Color(0xFF8CB0FF)
-                                  : Colors.transparent,
-                              width: 2,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 26,
-                              vertical: 16,
-                            ),
-                          ),
+                FocusTraversalGroup(
+                  policy: OrderedTraversalPolicy(),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      _ErrorActionButton(
+                        autofocus: true,
+                        icon: Icons.refresh_rounded,
+                        label: 'Retry',
+                        onPressed: onRetry,
+                      ),
+                      if (onLogin != null) ...<Widget>[
+                        const SizedBox(width: 20),
+                        _ErrorActionButton(
+                          icon: Icons.login_rounded,
+                          label: 'Login',
+                          onPressed: onLogin!,
                         ),
-                      );
-                    },
+                      ],
+                    ],
                   ),
                 ),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ErrorActionButton extends StatelessWidget {
+  const _ErrorActionButton({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.autofocus = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+  final bool autofocus;
+
+  @override
+  Widget build(BuildContext context) {
+    return FocusableActionDetector(
+      autofocus: autofocus,
+      actions: <Type, Action<Intent>>{
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (ActivateIntent intent) {
+            onPressed();
+            return null;
+          },
+        ),
+      },
+      child: Builder(
+        builder: (BuildContext context) {
+          final bool hasFocus = Focus.of(context).hasFocus;
+          return AnimatedScale(
+            duration: const Duration(milliseconds: 120),
+            scale: hasFocus ? 1.02 : 1,
+            child: ElevatedButton.icon(
+              onPressed: onPressed,
+              icon: Icon(icon, size: 22),
+              label: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                elevation: 0,
+                foregroundColor: const Color(0xFF06122A),
+                backgroundColor: hasFocus
+                    ? const Color(0xFFE4EEFF)
+                    : const Color(0xFFD5E3FF),
+                side: BorderSide(
+                  color: hasFocus
+                      ? const Color(0xFF8CB0FF)
+                      : Colors.transparent,
+                  width: 2,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 26,
+                  vertical: 16,
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }

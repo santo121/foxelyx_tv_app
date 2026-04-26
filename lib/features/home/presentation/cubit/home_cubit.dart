@@ -78,6 +78,7 @@ class HomeCubit extends Cubit<HomeState> {
   int _videoSlotGeneration = 0;
   AdContent? _pendingPlaylistContent;
   bool _isRefreshInFlight = false;
+  bool _refreshRequestedWhileInFlight = false;
   VideoPlayerController? _preparedVideoController;
   int? _preparedVideoDisplayIndex;
   bool _isPreparingVideo = false;
@@ -140,17 +141,24 @@ class HomeCubit extends Cubit<HomeState> {
   Future<void> refreshPlaylistFromServer() async {
     if (isClosed) return;
     if (state is HomeLoading) return;
-    if (_isRefreshInFlight) return;
+    if (_isRefreshInFlight) {
+      // Coalesce rapid socket events so we always run one trailing refresh.
+      _refreshRequestedWhileInFlight = true;
+      return;
+    }
     _isRefreshInFlight = true;
     try {
-      final AdContent content = await _refreshAdsWithAuthRecovery();
-      if (isClosed) return;
-      if (_shouldApplyPlaylistImmediately()) {
-        await _applyPlaylistImmediately(content);
-      } else {
-        // Queue playlist refresh and apply only at ad boundary.
-        _pendingPlaylistContent = content;
-      }
+      do {
+        _refreshRequestedWhileInFlight = false;
+        final AdContent content = await _refreshAdsWithAuthRecovery();
+        if (isClosed) return;
+        if (_shouldApplyPlaylistImmediately()) {
+          await _applyPlaylistImmediately(content);
+        } else {
+          // Queue playlist refresh and apply only at ad boundary.
+          _pendingPlaylistContent = content;
+        }
+      } while (_refreshRequestedWhileInFlight && !isClosed);
     } catch (e, st) {
       if (kDebugMode) {
         // ignore: avoid_print
@@ -514,6 +522,7 @@ class HomeCubit extends Cubit<HomeState> {
     final int videoIndex = currentIndex - posterCount;
     if (controller == null) {
       // Defensive: keep loop running even if controller was already disposed.
+      if (_applyPendingPlaylistIfAny()) return;
       if (videoCount > 0) {
         _playVideoAt(content, videoIndex.clamp(0, videoCount - 1));
       }

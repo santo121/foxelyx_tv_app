@@ -1,14 +1,16 @@
 import '../../../../core/domain/entities/vehicle_session.dart';
 import '../../../../core/domain/repositories/auth_repository.dart';
+import '../../../../core/utils/local_data_cleaner.dart';
 import '../datasources/local_auth_datasource.dart';
 import '../datasources/remote_auth_datasource.dart';
 
 /// Implements [AuthRepository]: server validation + local persistence.
 class AuthRepositoryImpl implements AuthRepository {
-  AuthRepositoryImpl(this._local, this._remote);
+  AuthRepositoryImpl(this._local, this._remote, this._localDataCleaner);
 
   final LocalAuthDatasource _local;
   final RemoteAuthDatasource _remote;
+  final LocalDataCleaner _localDataCleaner;
   static final RegExp _uuidPattern = RegExp(
     r'^[0-9a-fA-F]{8}-'
     r'[0-9a-fA-F]{4}-'
@@ -57,6 +59,10 @@ class AuthRepositoryImpl implements AuthRepository {
       );
       await _local.saveSession(refreshed);
       return true;
+    } on AuthUnauthorizedException {
+      await _local.clearSession();
+      await _localDataCleaner.clearAllCachedData();
+      return false;
     } catch (_) {
       return false;
     }

@@ -78,6 +78,14 @@ class RemoteAuthDatasource {
 
     final Map<String, dynamic> authBody = _decodeJsonMap(authResponse.body);
     final bool authOk = authBody['success'] as bool? ?? false;
+    if (authResponse.statusCode == 401) {
+      final String? err = authBody['error'] as String?;
+      final String? msg = authBody['message'] as String?;
+      throw AuthUnauthorizedException(
+        _sanitizeMessage(err ?? msg) ??
+            'Invalid device credentials. Please sign in again.',
+      );
+    }
     if (!authOk ||
         authResponse.statusCode < 200 ||
         authResponse.statusCode >= 300) {
@@ -184,4 +192,8 @@ class AuthException implements Exception {
   final String message;
   @override
   String toString() => message;
+}
+
+class AuthUnauthorizedException extends AuthException {
+  AuthUnauthorizedException(super.message);
 }

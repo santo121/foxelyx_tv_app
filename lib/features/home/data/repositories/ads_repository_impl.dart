@@ -1,4 +1,3 @@
-import '../../../../core/domain/repositories/auth_repository.dart';
 import '../../../../core/utils/ext_cache_manager.dart';
 import '../../domain/entities/ad_content.dart';
 import '../../domain/repositories/ads_repository.dart';
@@ -6,16 +5,10 @@ import '../datasources/playlist_ads_datasource.dart';
 import '../datasources/video_cache_datasource.dart';
 
 class AdsRepositoryImpl implements AdsRepository {
-  AdsRepositoryImpl(this._playlist, this._videoCache, this._auth);
+  AdsRepositoryImpl(this._playlist, this._videoCache);
 
   final PlaylistAdsDatasource _playlist;
   final VideoCacheDatasource _videoCache;
-  final AuthRepository _auth;
-
-  static bool _isRestaurantPlacement(String? placement) {
-    if (placement == null) return false;
-    return placement.trim().toUpperCase() == 'RESTAURANT';
-  }
 
   /// Cached resolved content so repeated getAds() (e.g. after each ad or new cubit)
   /// returns local paths without calling network or re-resolving.
@@ -31,8 +24,6 @@ class AdsRepositoryImpl implements AdsRepository {
   Future<AdContent> getAds() async {
     if (_cachedResolvedContent != null) return _cachedResolvedContent!;
 
-    final session = await _auth.getStoredSession();
-    final bool restaurant = _isRestaurantPlacement(session?.placement);
     final AdContent fetchedContent = await _playlist.getAds();
 
     final bool apiPlaylistEmpty = fetchedContent.videoUrls.isEmpty &&
@@ -47,22 +38,12 @@ class AdsRepositoryImpl implements AdsRepository {
       } catch (_) {}
     }
 
-    // RESTAURANT placement: no YouTube in the playlist. Otherwise inject global filler URLs.
-    final AdContent content = restaurant
-        ? AdContent(
-            videoUrls: fetchedContent.videoUrls,
-            posterUrls: fetchedContent.posterUrls,
-            youtubeUrls: const <String>[],
-          )
-        : AdContent(
-            videoUrls: fetchedContent.videoUrls,
-            posterUrls: fetchedContent.posterUrls,
-            youtubeUrls: <String>{
-              ...fetchedContent.youtubeUrls,
-              'https://www.youtube.com/watch?v=kzpS-A3QJqE&list=RDkzpS-A3QJqE&start_radio=1',
-              'https://www.youtube.com/watch?v=DXm6diugHCc&list=RDDXm6diugHCc&start_radio=1',
-            }.toList(),
-          );
+    // YouTube playback disabled (slow manifest + startup); ignore API YouTube entries.
+    final AdContent content = AdContent(
+      videoUrls: fetchedContent.videoUrls,
+      posterUrls: fetchedContent.posterUrls,
+      youtubeUrls: const <String>[],
+    );
 
     try {
       await _videoCache.purgeMissingFrom(content.videoUrls.toSet());

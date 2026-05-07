@@ -145,6 +145,17 @@ class _SplashPageState extends State<SplashPage> {
     );
   }
 
+  /// Clears stored pairing session so [AuthGate] shows the registration screen.
+  Future<void> _clearSessionAndGoToAuthGate() async {
+    try {
+      await getIt<AuthRepository>().clearSession();
+    } catch (_) {
+      // Best effort: still navigate so the user can re-pair.
+    }
+    if (!mounted) return;
+    _goToAuthGate();
+  }
+
   void _goToHome() {
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
@@ -155,7 +166,9 @@ class _SplashPageState extends State<SplashPage> {
             cubit.loadAds();
             return cubit;
           },
-          child: TvHomePage(onLoginRequested: _goToAuthGate),
+          child: TvHomePage(
+            onLoginRequested: () => unawaited(_clearSessionAndGoToAuthGate()),
+          ),
         ),
       ),
     );

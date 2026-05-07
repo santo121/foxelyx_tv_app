@@ -2,6 +2,7 @@ import 'package:get_it/get_it.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../domain/repositories/auth_repository.dart';
+import '../utils/local_data_cleaner.dart';
 import '../../features/auth/data/datasources/device_info_datasource.dart';
 import '../../features/auth/data/datasources/local_auth_datasource.dart';
 import '../../features/auth/data/datasources/remote_auth_datasource.dart';
@@ -27,11 +28,13 @@ Future<void> setupDi() async {
   );
   getIt.registerLazySingleton<RemoteAuthDatasource>(RemoteAuthDatasource.new);
   getIt.registerLazySingleton<DeviceInfoDatasource>(DeviceInfoDatasource.new);
+  getIt.registerLazySingleton<LocalDataCleaner>(LocalDataCleaner.new);
 
   getIt.registerLazySingleton<AuthRepository>(
     () => AuthRepositoryImpl(
       getIt<LocalAuthDatasource>(),
       getIt<RemoteAuthDatasource>(),
+      getIt<LocalDataCleaner>(),
     ),
   );
   getIt.registerFactory<AuthCubit>(
@@ -50,7 +53,6 @@ Future<void> setupDi() async {
     () => AdsRepositoryImpl(
       getIt<PlaylistAdsDatasource>(),
       getIt<VideoCacheDatasource>(),
-      getIt<AuthRepository>(),
     ),
   );
   getIt.registerFactory<HomeCubit>(

@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:video_player/video_player.dart';
-import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import '../../../../core/domain/repositories/auth_repository.dart';
 import '../../domain/campaign_playlist_socket.dart';
@@ -14,36 +13,6 @@ import '../../domain/exceptions/playlist_auth_required_exception.dart';
 import '../../domain/entities/preloaded_ads_holder.dart';
 import '../../domain/repositories/ads_repository.dart';
 import 'home_state.dart';
-
-/// Top-level worker to extract YouTube URLs off the main isolate, preventing jank/freezes on the news ticker.
-Future<String?> _extractYoutubeLink(String url) async {
-  final yt = YoutubeExplode();
-  try {
-    final videoId = VideoId(url);
-    final manifest = await yt.videos.streamsClient.getManifest(videoId);
-    
-    // Try to get the highest quality 720p/1080p MUXED stream (with Audio).
-    // YouTube's max muxed limit is typically 720p.
-    final muxedStreams = manifest.muxed.where((s) => s.container == StreamContainer.mp4).toList();
-    if (muxedStreams.isNotEmpty) {
-      muxedStreams.sort((a, b) => b.videoResolution.height.compareTo(a.videoResolution.height));
-      return muxedStreams.first.url.toString();
-    } else if (manifest.videoOnly.isNotEmpty) {
-      // Fallback to highest quality video-only (often 1080p or 4K but silent)
-      final videoStreams = manifest.videoOnly.where((s) => s.container == StreamContainer.mp4).toList();
-      if (videoStreams.isNotEmpty) {
-        videoStreams.sort((a, b) => b.videoResolution.height.compareTo(a.videoResolution.height));
-        return videoStreams.first.url.toString();
-      }
-      return manifest.videoOnly.withHighestBitrate().url.toString();
-    }
-  } catch (e) {
-    if (kDebugMode) print('Youtube isolate error: $e');
-  } finally {
-    yt.close();
-  }
-  return null;
-}
 
 /// Single video controller at a time; init next when advancing to next video slot.
 /// Posters and videos are shown in order: each poster 20s, then each video for its duration.
@@ -208,13 +177,8 @@ class HomeCubit extends Cubit<HomeState> {
     }
   }
 
-  int _youtubeRotationIndex = 0;
-
-  List<String> _getActiveMediaUrls(AdContent content) {
-    if (content.youtubeUrls.isEmpty) return content.videoUrls;
-    final String activeYoutube = content.youtubeUrls[_youtubeRotationIndex % content.youtubeUrls.length];
-    return [...content.videoUrls, activeYoutube];
-  }
+  /// Only [AdContent.videoUrls] are played; playlist YouTube entries are dropped upstream.
+  List<String> _getActiveMediaUrls(AdContent content) => content.videoUrls;
 
   void _startRotation(AdContent content) {
     if (isClosed) return;
@@ -272,28 +236,8 @@ class HomeCubit extends Cubit<HomeState> {
       }
       if (isClosed || videoIndex >= _getActiveMediaUrls(warmedContent).length) return;
       final String url = _getActiveMediaUrls(warmedContent)[videoIndex];
-      
-      String actualUrl = url;
-      final bool isYoutube = url.toLowerCase().contains('youtube.com') || url.toLowerCase().contains('youtu.be');
-      if (isYoutube) {
-        if (!isClosed) {
-          emit(HomeLoaded(
-            content: warmedContent,
-            videoController: null,
-            currentDisplayIndex: displayIndex,
-          ));
-        }
-        try {
-          final String? extracted = await compute(_extractYoutubeLink, url);
-          if (extracted != null) {
-            actualUrl = extracted;
-          }
-        } catch (e) {
-          if (kDebugMode) print('Youtube fetch error: $e');
-        }
-      }
-      
-      controller = _controllerForUrl(actualUrl);
+
+      controller = _controllerForUrl(url);
       try {
         final bool acquired = await _acquireVideoInitLock(waitIfBusy: true);
         if (!acquired) {
@@ -569,11 +513,8 @@ class HomeCubit extends Cubit<HomeState> {
     if (isClosed) return;
     if (slot != _videoSlotGeneration) return;
     if (videoIndex >= 0 && videoIndex < _getActiveMediaUrls(content).length) {
-      final url = _getActiveMediaUrls(content)[videoIndex];
-      final isYoutube = url.toLowerCase().contains('youtube.com') || url.toLowerCase().contains('youtu.be');
-      if (!isYoutube) {
-        unawaited(_cachePlayedVideoBestEffort(url));
-      }
+      final String url = _getActiveMediaUrls(content)[videoIndex];
+      unawaited(_cachePlayedVideoBestEffort(url));
     }
     _videoSlotGeneration++;
     _removeVideoHealthListener();
@@ -598,7 +539,6 @@ class HomeCubit extends Cubit<HomeState> {
       }
       _playVideoAt(content, videoIndex + 1);
     } else {
-      _youtubeRotationIndex++;
       if (posterCount > 0) {
         emit(HomeLoaded(content: content, currentDisplayIndex: 0));
         _scheduleNext(content, null, 0);
@@ -714,9 +654,7 @@ class HomeCubit extends Cubit<HomeState> {
       }
       if (isClosed || videoIndex >= _getActiveMediaUrls(warmedContent).length) return;
       final String url = _getActiveMediaUrls(warmedContent)[videoIndex];
-      final bool isYoutube = url.toLowerCase().contains('youtube.com') || url.toLowerCase().contains('youtu.be');
-      if (isYoutube) return;
-      
+
       final VideoPlayerController prepared = _controllerForUrl(url);
       final bool acquired = await _acquireVideoInitLock();
       if (!acquired) {

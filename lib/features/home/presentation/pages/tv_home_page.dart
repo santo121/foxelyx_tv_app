@@ -92,10 +92,9 @@ class _TvHomePageState extends State<TvHomePage> with WidgetsBindingObserver {
         if (state is HomeContentReady) {
           final bool isPlaylistEmpty =
               state.content.posterUrls.isEmpty &&
-              state.content.videoUrls.isEmpty &&
-              state.content.youtubeUrls.isEmpty;
+              state.content.videoUrls.isEmpty;
           if (isPlaylistEmpty) {
-            return const _EmptyPlaylistView();
+            return _EmptyPlaylistView(rotatePortrait: _rotatePostersPortrait);
           }
           return _HomeLayout(
             posterUrls: state.content.posterUrls,
@@ -107,10 +106,9 @@ class _TvHomePageState extends State<TvHomePage> with WidgetsBindingObserver {
         if (state is HomeLoaded) {
           final bool isPlaylistEmpty =
               state.content.posterUrls.isEmpty &&
-              state.content.videoUrls.isEmpty &&
-              state.content.youtubeUrls.isEmpty;
+              state.content.videoUrls.isEmpty;
           if (isPlaylistEmpty) {
-            return const _EmptyPlaylistView();
+            return _EmptyPlaylistView(rotatePortrait: _rotatePostersPortrait);
           }
           return _HomeLayout(
             posterUrls: state.content.posterUrls,
@@ -275,7 +273,7 @@ class _HomeErrorView extends StatelessWidget {
   }
 }
 
-class _ErrorActionButton extends StatelessWidget {
+class _ErrorActionButton extends StatefulWidget {
   const _ErrorActionButton({
     required this.icon,
     required this.label,
@@ -289,59 +287,71 @@ class _ErrorActionButton extends StatelessWidget {
   final bool autofocus;
 
   @override
+  State<_ErrorActionButton> createState() => _ErrorActionButtonState();
+}
+
+class _ErrorActionButtonState extends State<_ErrorActionButton> {
+  late final FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode(debugLabel: 'HomeError_${widget.label}');
+    _focusNode.addListener(_onFocusChange);
+  }
+
+  void _onFocusChange() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _focusNode.removeListener(_onFocusChange);
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return FocusableActionDetector(
-      autofocus: autofocus,
-      actions: <Type, Action<Intent>>{
-        ActivateIntent: CallbackAction<ActivateIntent>(
-          onInvoke: (ActivateIntent intent) {
-            onPressed();
-            return null;
-          },
-        ),
-      },
-      child: Builder(
-        builder: (BuildContext context) {
-          final bool hasFocus = Focus.of(context).hasFocus;
-          return AnimatedScale(
-            duration: const Duration(milliseconds: 120),
-            scale: hasFocus ? 1.02 : 1,
-            child: ElevatedButton.icon(
-              onPressed: onPressed,
-              icon: Icon(icon, size: 22),
-              label: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                child: Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                elevation: 0,
-                foregroundColor: const Color(0xFF06122A),
-                backgroundColor: hasFocus
-                    ? const Color(0xFFE4EEFF)
-                    : const Color(0xFFD5E3FF),
-                side: BorderSide(
-                  color: hasFocus
-                      ? const Color(0xFF8CB0FF)
-                      : Colors.transparent,
-                  width: 2,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 26,
-                  vertical: 16,
-                ),
-              ),
+    final bool hasFocus = _focusNode.hasFocus;
+    return AnimatedScale(
+      duration: const Duration(milliseconds: 120),
+      scale: hasFocus ? 1.02 : 1,
+      child: ElevatedButton.icon(
+        focusNode: _focusNode,
+        autofocus: widget.autofocus,
+        onPressed: widget.onPressed,
+        icon: Icon(widget.icon, size: 22),
+        label: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          child: Text(
+            widget.label,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
             ),
-          );
-        },
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          elevation: 0,
+          foregroundColor: const Color(0xFF06122A),
+          backgroundColor: hasFocus
+              ? const Color(0xFFE4EEFF)
+              : const Color(0xFFD5E3FF),
+          side: BorderSide(
+            color: hasFocus
+                ? const Color(0xFF8CB0FF)
+                : Colors.transparent,
+            width: 2,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 26,
+            vertical: 16,
+          ),
+        ),
       ),
     );
   }
@@ -476,8 +486,9 @@ class _VideoPlaceholder extends StatelessWidget {
 }
 
 class _EmptyPlaylistView extends StatelessWidget {
-  const _EmptyPlaylistView();
+  const _EmptyPlaylistView({this.rotatePortrait = false});
   static const String _adsPhoneNumber = '+91 87140 10234';
+  final bool rotatePortrait;
 
   @override
   Widget build(BuildContext context) {
@@ -490,7 +501,7 @@ class _EmptyPlaylistView extends StatelessWidget {
         final int cacheWidth = decodePixelsAlong(logoWidth, dpr);
         final int cacheHeight = decodePixelsAlong(logoHeight, dpr);
 
-        return Container(
+        final Widget content = Container(
           color: Colors.black,
           alignment: Alignment.center,
           child: RepaintBoundary(
@@ -543,6 +554,15 @@ class _EmptyPlaylistView extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        );
+        if (!rotatePortrait) return content;
+        return RotatedBox(
+          quarterTurns: 1,
+          child: SizedBox(
+            width: height,
+            height: constraints.maxWidth,
+            child: content,
           ),
         );
       },
